@@ -109,6 +109,9 @@ enum {
 
 	CR_FD_AUTOFS,
 
+	CR_FD_IBVERBS,
+	CR_FD_IBEVENT,
+
 	CR_FD_MAX
 };
 

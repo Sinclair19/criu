@@ -36,6 +36,7 @@
 #include "signalfd.h"
 #include "namespaces.h"
 #include "tun.h"
+#include "ibverbs.h"
 #include "timerfd.h"
 #include "imgset.h"
 #include "fs-magic.h"
@@ -464,6 +465,9 @@ static int dump_chrdev(struct fd_parms *p, int lfd, FdinfoEntry *e)
 			p->link = &link;
 			ops = &tty_dump_ops;
 			break;
+		} else if (is_ibverbs(p->stat.st_rdev, p->stat.st_dev)) {
+			ops = &ibverbs_dump_ops;
+			break;
 		}
 
 		sprintf(more, "%d:%d", maj, minor(p->stat.st_rdev));
@@ -529,6 +533,8 @@ static int dump_one_file(struct pid *pid, int fd, int lfd, struct fd_opts *opts,
 			ops = &signalfd_dump_ops;
 		else if (is_timerfd_link(link))
 			ops = &timerfd_dump_ops;
+		else if (is_ibevent_link(link))
+			ops = &ibevent_dump_ops;
 		else
 			return dump_unsupp_fd(&p, lfd, "anon", link, e);
 
@@ -1714,6 +1720,12 @@ static int collect_one_file(void *o, ProtobufCMessage *base, struct cr_img *i)
 		break;
 	case FD_TYPES__TTY:
 		ret = collect_one_file_entry(fe, fe->tty->id, &fe->tty->base, &tty_cinfo);
+		break;
+	case FD_TYPES__IBVERBS:
+		ret = collect_one_file_entry(fe, fe->ibv->id, &fe->ibv->base, &ibv_cinfo);
+		break;
+	case FD_TYPES__IBEVENTFD:
+		ret = collect_one_file_entry(fe, fe->ibe->id, &fe->ibe->base, &ibe_cinfo);
 		break;
 	}
 

@@ -41,6 +41,7 @@
 #include "sk-inet.h"
 #include "eventfd.h"
 #include "eventpoll.h"
+#include "ibverbs.h"
 #include "signalfd.h"
 #include "proc_parse.h"
 #include "pie/restorer-blob.h"
@@ -287,6 +288,8 @@ static struct collect_image_info *cinfos_files[] = {
 	&fanotify_cinfo,
 	&fanotify_mark_cinfo,
 	&ext_file_cinfo,
+	&ibv_cinfo,
+	&ibe_cinfo,
 };
 
 /* These images are required to restore namespaces */

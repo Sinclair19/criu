@@ -1949,7 +1949,7 @@ static int parse_fdinfo_pid_s(int pid, int fd, int type, void *arg)
 	 * An eventpoll/inotify file may have no target fds set thus
 	 * resulting in no tfd: lines in proc. This is normal.
 	 */
-	if (type == FD_TYPES__EVENTPOLL || type == FD_TYPES__INOTIFY)
+	if (type == FD_TYPES__EVENTPOLL || type == FD_TYPES__INOTIFY || type == FD_TYPES__IBEVENTFD)
 		goto out;
 
 	pr_err("No records of type %d found in fdinfo file\n", type);

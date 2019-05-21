@@ -9,6 +9,7 @@ import "eventfd.proto";
 import "eventpoll.proto";
 import "signalfd.proto";
 import "tun.proto";
+import "ibverbs.proto";
 import "timerfd.proto";
 import "fsnotify.proto";
 import "ext-file.proto";
@@ -36,6 +37,8 @@ enum fd_types {
 	TUNF		= 15;
 	EXT		= 16;
 	TIMERFD		= 17;
+	IBVERBS		= 18;
+	IBEVENTFD	= 19;
 
 	/* Any number above the real used. Not stored to image */
 	CTL_TTY		= 65534;
@@ -70,4 +73,6 @@ message file_entry {
 	optional fifo_entry		fifo	= 17;
 	optional pipe_entry		pipe	= 18;
 	optional tty_file_entry		tty	= 19;
+	optional ibverbs_entry		ibv	= 20;
+	optional ibevent_entry		ibe	= 21;
 }

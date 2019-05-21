@@ -79,6 +79,7 @@ obj-y			+= timerfd.o
 obj-$(CONFIG_GNUTLS)	+= tls.o
 obj-y			+= tty.o
 obj-y			+= tun.o
+obj-y			+= ibverbs.o
 obj-y			+= util.o
 obj-y			+= uts_ns.o
 obj-y			+= path.o

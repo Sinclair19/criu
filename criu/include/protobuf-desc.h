@@ -77,6 +77,9 @@ enum {
 	PB_IPCNS_MSG,
 	PB_IPCNS_MSG_ENT,
 
+	PB_IBVERBS,
+	PB_IBEVENT,
+
 	PB_MAX,
 };
 
