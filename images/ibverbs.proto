@@ -8,10 +8,15 @@ enum IbverbsType {
 	RXE              = 1;
 }
 
+message ibverbs_pd {
+	required uint32		id	= 1;
+};
+
 message ibverbs_entry {
 	required uint32 	id 	= 1;
 	required uint32		flags	= 2 [(criu).hex = true];
 	required fown_entry	fown	= 3;
+	repeated ibverbs_pd	pds	= 4;
 };
 
 message ibevent_entry {

@@ -99,8 +99,66 @@ static int dump_one_ibverbs(int lfd, u32 id, const struct fd_parms *p)
 	fe.id = ibv.id;
 	fe.ibv = &ibv;
 
+	struct ibv_device *ibdev;
+	struct ibv_context *ctx;
+	const char *ib_devname = "rxe0";
+	ibdev = find_ibdev(ib_devname);
+	if (!ibdev) {
+		pr_err("IB device %s not found\n", ib_devname);
+		return -1;
+	}
+
+	ctx = ibv_reopen_device(ibdev, lfd);
+	if (!ctx) {
+		pr_perror("Failed to open the device %d\n", lfd);
+		return -1;
+	}
+
+	/* XXX: hack to avoid error upon exit */
+	ctx->async_fd = lfd;
+
+	int ret;
+	int total;
+	const int n_elem = 8;
+	int pd[n_elem];
+	ret = ibv_dump_pd(ctx, &total, pd, 8);
+	if (ret) {
+		pr_err("Failed to dump protection domain\n");
+		return -1;
+	}
+
+	if (total > n_elem) {
+		pr_err("Failed to capture all protection domains\n");
+		return -1;
+	}
+
+	ibv.n_pds = total;
+	ibv.pds = xmalloc(pb_repeated_size(&ibv, pds));
+
+	if (!ibv.pds) {
+		pr_err("Failed to allocate memory for protection domains\n");
+		return -1;
+	}
+
+	pr_err("Found total PDs: %d\n", total);
+
+	for (int i = 0; i < total; i++) {
+		pr_err("Found PD: %d\n", pd[i]);
+
+		ibv.pds[i] = malloc(sizeof(*ibv.pds[i]));
+		ibverbs_pd__init(ibv.pds[i]);
+
+		ibv.pds[i]->id = pd[i];
+	}
+
 	img = img_from_set(glob_imgset, CR_FD_FILES);
-	return pb_write_one(img, &fe, PB_FILE);
+	ret = pb_write_one(img, &fe, PB_FILE);
+	if (ret) {
+		pr_perror("Failed to write image\n");
+	}
+
+	xfree(ibv.pds);
+	return ret;
 }
 
 const struct fdtype_ops ibverbs_dump_ops = {
@@ -136,6 +194,21 @@ static int ibverbs_open(struct file_desc *d, int *new_fd)
 		pr_perror("Can't restore params on ibverbs %#08x\n",
 			  info->ibv->id);
 		goto err_close;
+	}
+
+	pr_err("Available PDs total: %ld\n", info->ibv->n_pds);
+
+	for (int i = 0; i < info->ibv->n_pds; i++) {
+		IbverbsPd *pde = info->ibv->pds[i];
+		struct ibv_pd *pd;
+		pd = ibv_alloc_pd(ibcontext);
+		if (!pd) {
+			goto err;
+		}
+
+		if (pde->id != pd->handle) {
+			pr_err("Unexpected protection domain handle: %d vs %d\n", pde->id, pd->handle);
+		}
 	}
 
 	pr_info("Opened a device %d %d", ibcontext->cmd_fd, ibcontext->async_fd);
