@@ -121,7 +121,7 @@ static int dump_one_ibverbs(int lfd, u32 id, const struct fd_parms *p)
 	int total;
 	const int n_elem = 8;
 	int pd[n_elem];
-	ret = ibv_dump_pd(ctx, &total, pd, 8);
+	ret = ibv_dump_context(ctx, &total, pd, 8);
 	if (ret) {
 		pr_err("Failed to dump protection domain\n");
 		return -1;
