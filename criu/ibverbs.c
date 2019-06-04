@@ -80,6 +80,69 @@ static void pr_info_ibverbs(char *action, IbverbsEntry *ibv)
 	pr_info("IB verbs %s: id %#08x flags %#04x\n", action, ibv->id, ibv->flags);
 }
 
+static int dump_one_ibverbs_pd(IbverbsObject **pb_obj, struct ib_uverbs_dump_object *dump_obj)
+{
+	struct ib_uverbs_dump_object_pd *dump_pd;
+	IbverbsPd *pd;
+
+	dump_pd = container_of(dump_obj, struct ib_uverbs_dump_object_pd, obj);
+
+	pr_err("Found object PD: %d\n", dump_pd->obj.handle);
+
+	*pb_obj = xmalloc(sizeof(**pb_obj));
+	if (!*pb_obj) {
+		return -1;
+	}
+	ibverbs_object__init(*pb_obj);
+	pd = xmalloc(sizeof(*pd));
+	if (!pd) {
+		xfree(*pb_obj);
+		return -1;
+	}
+	ibverbs_pd__init(pd);
+
+	(*pb_obj)->type = IBVERBS_OBJECT_TYPE__PD;
+	(*pb_obj)->handle = dump_pd->obj.handle;
+	(*pb_obj)->pd = pd;
+
+	return sizeof(*dump_pd);
+}
+
+static int dump_one_ibverbs_mr(IbverbsObject **pb_obj, struct ib_uverbs_dump_object *dump_obj)
+{
+	struct ib_uverbs_dump_object_mr *dump_mr;
+	IbverbsMr *mr;
+
+	dump_mr = container_of(dump_obj, struct ib_uverbs_dump_object_mr, obj);
+	pr_err("Found object MR: %d\n", dump_mr->obj.handle);
+
+	*pb_obj = xmalloc(sizeof(**pb_obj));
+	if (!*pb_obj) {
+		return -1;
+	}
+	ibverbs_object__init(*pb_obj);
+	mr = xmalloc(sizeof(*mr));
+	if (!mr) {
+		xfree(*pb_obj);
+		return -1;
+	}
+	ibverbs_mr__init(mr);
+
+	mr->address = dump_mr->address;
+	mr->length = dump_mr->length;
+	mr->access = dump_mr->access;
+	mr->pd_handle = dump_mr->pd_handle;
+	mr->lkey = dump_mr->lkey;
+	mr->rkey = dump_mr->rkey;
+
+	(*pb_obj)->type = IBVERBS_OBJECT_TYPE__MR;
+	(*pb_obj)->handle = dump_mr->obj.handle;
+	(*pb_obj)->mr = mr;
+
+	return sizeof(*dump_mr);
+
+}
+
 static int dump_one_ibverbs(int lfd, u32 id, const struct fd_parms *p)
 {
 	struct cr_img *img;
@@ -118,37 +181,45 @@ static int dump_one_ibverbs(int lfd, u32 id, const struct fd_parms *p)
 	ctx->async_fd = lfd;
 
 	int ret;
-	int total;
-	const int n_elem = 8;
-	int pd[n_elem];
-	ret = ibv_dump_context(ctx, &total, pd, 8);
+	int count;
+	char dump[256];
+	ret = ibv_dump_context(ctx, &count, dump, sizeof(dump));
 	if (ret) {
-		pr_err("Failed to dump protection domain\n");
+		pr_err("Failed to dump protection domain: %d\n", ret);
 		return -1;
 	}
 
-	if (total > n_elem) {
-		pr_err("Failed to capture all protection domains\n");
-		return -1;
-	}
+	ibv.n_objs = count;
+	ibv.objs = xzalloc(pb_repeated_size(&ibv, objs));
 
-	ibv.n_pds = total;
-	ibv.pds = xmalloc(pb_repeated_size(&ibv, pds));
-
-	if (!ibv.pds) {
+	if (!ibv.objs) {
 		pr_err("Failed to allocate memory for protection domains\n");
 		return -1;
 	}
 
-	pr_err("Found total PDs: %d\n", total);
+	pr_err("Found total Objs: %d\n", count);
 
-	for (int i = 0; i < total; i++) {
-		pr_err("Found PD: %d\n", pd[i]);
-
-		ibv.pds[i] = malloc(sizeof(*ibv.pds[i]));
-		ibverbs_pd__init(ibv.pds[i]);
-
-		ibv.pds[i]->id = pd[i];
+	void *cur_obj = dump;
+	for (int i = 0; i < count; i++) {
+		struct ib_uverbs_dump_object *obj = cur_obj;
+		pr_err("Found obj of type: %d %p %p %d\n", obj->type, cur_obj, obj, *(uint32_t *)cur_obj);
+		switch(obj->type) {
+		case IB_UVERBS_OBJECT_PD:
+			ret = dump_one_ibverbs_pd(&ibv.objs[i], obj);
+			break;
+		case IB_UVERBS_OBJECT_MR:
+			ret = dump_one_ibverbs_mr(&ibv.objs[i], obj);
+			break;
+		default:
+			pr_err("Unknown object type: %d\n", obj->type);
+			ret = -1;
+			break;
+		}
+		if (ret < 0) {
+			goto out;
+		}
+		pr_err("Moving pointer by %d\n", ret);
+		cur_obj += ret;
 	}
 
 	img = img_from_set(glob_imgset, CR_FD_FILES);
@@ -157,7 +228,11 @@ static int dump_one_ibverbs(int lfd, u32 id, const struct fd_parms *p)
 		pr_perror("Failed to write image\n");
 	}
 
-	xfree(ibv.pds);
+ out:
+	for (int i = 0; i < count; i++) {
+		xfree(ibv.objs[i]);
+	}
+	xfree(ibv.objs);
 	return ret;
 }
 
@@ -196,18 +271,18 @@ static int ibverbs_open(struct file_desc *d, int *new_fd)
 		goto err_close;
 	}
 
-	pr_err("Available PDs total: %ld\n", info->ibv->n_pds);
+	pr_err("Available PDs total: %ld\n", info->ibv->n_objs);
 
-	for (int i = 0; i < info->ibv->n_pds; i++) {
-		IbverbsPd *pde = info->ibv->pds[i];
+	for (int i = 0; i < info->ibv->n_objs; i++) {
+		IbverbsObject *obj = info->ibv->objs[i];
 		struct ibv_pd *pd;
 		pd = ibv_alloc_pd(ibcontext);
 		if (!pd) {
 			goto err;
 		}
 
-		if (pde->id != pd->handle) {
-			pr_err("Unexpected protection domain handle: %d vs %d\n", pde->id, pd->handle);
+		if (pd->handle != obj->handle) {
+			pr_err("Unexpected protection domain handle: %d vs %d\n", obj->handle, pd->handle);
 		}
 	}
 

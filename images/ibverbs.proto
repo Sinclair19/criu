@@ -8,15 +8,49 @@ enum IbverbsType {
 	RXE              = 1;
 }
 
+enum IbverbsObjectType {
+	INVALID		= 0;
+	PD		= 1;
+	COMP_CHANNEL	= 2;
+	CQ		= 3;
+	QP		= 4;
+	SRQ		= 5;
+	AH		= 6;
+	MR		= 7;
+	MW		= 8;
+	FLOW		= 9;
+	XRCD		= 10;
+	RWQ_IND_TBL	= 11;
+	WQ		= 12;
+	FLOW_ACTION	= 13;
+	DM		= 14;
+	COUNTERS	= 15;
+};
+
 message ibverbs_pd {
-	required uint32		id	= 1;
+};
+
+message ibverbs_mr {
+	required uint64	address		= 2;
+	required uint64	length		= 3;
+	required uint32	access		= 4;
+	required uint32	pd_handle	= 5;
+	required uint32	lkey		= 6;
+	required uint32	rkey		= 7;
+};
+
+message ibverbs_object {
+	required IbverbsObjectType	type	= 1;
+	required uint32			handle	= 2;
+	optional ibverbs_pd		pd	= 3;
+	optional ibverbs_mr		mr	= 4;
 };
 
 message ibverbs_entry {
 	required uint32 	id 	= 1;
 	required uint32		flags	= 2 [(criu).hex = true];
 	required fown_entry	fown	= 3;
-	repeated ibverbs_pd	pds	= 4;
+	repeated ibverbs_object	objs	= 4;
 };
 
 message ibevent_entry {
