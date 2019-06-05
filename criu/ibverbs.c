@@ -241,7 +241,57 @@ const struct fdtype_ops ibverbs_dump_ops = {
 	.dump	= dump_one_ibverbs,
 };
 
+#define ELEM_COUNT 10
 static int last_event_fd;
+static struct ibv_pd *open_pds[ELEM_COUNT];
+static struct ibv_mr *open_mrs[ELEM_COUNT];
+
+static int ibverbs_restore_pd(struct ibv_context *ibcontext, IbverbsObject *obj)
+{
+	struct ibv_pd *pd;
+	pd = ibv_alloc_pd(ibcontext);
+	if (!pd) {
+		return -1;
+	}
+
+	if (pd->handle != obj->handle) {
+		pr_err("Unexpected protection domain handle: %d vs %d\n", obj->handle, pd->handle);
+		ibv_dealloc_pd(pd);
+		return -1;
+	}
+
+	open_pds[pd->handle] = pd;
+
+	return 0;
+}
+
+static int ibverbs_restore_mr(IbverbsObject *obj)
+{
+	IbverbsMr *pb_mr = obj->mr;
+	struct ibv_pd *pd = open_pds[pb_mr->pd_handle];
+	struct ibv_mr *mr;
+#define TRACE 1
+#if TRACE
+	int fd = open("/sys/kernel/debug/tracing/tracing_on", O_WRONLY);
+	write(fd, "1", 1);
+#endif
+	mr = ibv_reg_mr(pd, (void *)pb_mr->address, pb_mr->length, pb_mr->access);
+#if TRACE
+	write(fd, "0", 1);
+	close(fd);
+#endif
+	if (!mr) {
+		pr_err("Failed to register memory region (0x%lx, +0x%lx) at PD %d with flags %x\n",
+		       pb_mr->address, pb_mr->length, pb_mr->pd_handle, pb_mr->access);
+	}
+
+	pr_err("Registered MR (0x%p, +0x%lx) at PD %d with flags %x: handle %d lkey %d rkey %d\n",
+	       mr->addr, mr->length, mr->pd->handle, pb_mr->access, mr->handle, mr->lkey, mr->rkey);
+
+	open_mrs[mr->handle] = mr;
+
+	return 0;
+}
 
 static int ibverbs_open(struct file_desc *d, int *new_fd)
 {
@@ -273,16 +323,24 @@ static int ibverbs_open(struct file_desc *d, int *new_fd)
 
 	pr_err("Available PDs total: %ld\n", info->ibv->n_objs);
 
-	for (int i = 0; i < info->ibv->n_objs; i++) {
+	for (int i = info->ibv->n_objs - 1; i >= 0 ; i--) {
 		IbverbsObject *obj = info->ibv->objs[i];
-		struct ibv_pd *pd;
-		pd = ibv_alloc_pd(ibcontext);
-		if (!pd) {
-			goto err;
-		}
+		int ret;
 
-		if (pd->handle != obj->handle) {
-			pr_err("Unexpected protection domain handle: %d vs %d\n", obj->handle, pd->handle);
+		pr_err("Restoring object %d of type %d\n", i, obj->type);
+		switch (obj->type) {
+		case IBVERBS_OBJECT_TYPE__PD:
+			ret = ibverbs_restore_pd(ibcontext, obj);
+			break;
+		case IBVERBS_OBJECT_TYPE__MR:
+			ret = ibverbs_restore_mr(obj);
+			break;
+		default:
+			pr_err("Object type is not supported: %d\n", obj->type);
+			goto err_close;
+		}
+		if (ret < 0) {
+			goto err_close;
 		}
 	}
 
