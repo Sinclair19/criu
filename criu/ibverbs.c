@@ -309,20 +309,33 @@ static int ibverbs_restore_mr(struct ibverbs_list_entry *entry)
 	struct ibv_pd *pd = open_pds[pb_mr->pd_handle];
 	struct ibv_mr *mr;
 	uint64_t addr = convert_to_remmapped_addr(pb_mr->address);
-	mr = ibv_reg_mr(pd, (void *)addr, pb_mr->length, pb_mr->access);
-	if (!mr) {
-		pr_err("Failed to register memory region (0x%lx, +0x%lx) at PD %d with flags %x premmapped at 0x%lx\n",
-		       pb_mr->address, pb_mr->length, pb_mr->pd_handle, pb_mr->access, addr);
-		return -1;
-	}
 
-	pr_err("Registered MR (0x%p, +0x%lx) at PD %d with flags %x orig at 0x%lx: handle %d lkey %d rkey %d\n",
-	       mr->addr, mr->length, mr->pd->handle, pb_mr->access, pb_mr->address, mr->handle, mr->lkey, mr->rkey);
+	/* XXX: dirty hack to ensure the same lkey */
+	int i = 300;
+	while (1) {
+		mr = ibv_reg_mr(pd, (void *)addr, pb_mr->length, pb_mr->access);
+		if (!mr) {
+			pr_err("Failed to register memory region (0x%lx, +0x%lx) at PD %d with flags %x premmapped at 0x%lx\n",
+			       pb_mr->address, pb_mr->length, pb_mr->pd_handle, pb_mr->access, addr);
+			return -1;
+		}
 
-	if (mr->lkey != pb_mr->lkey || mr->rkey != pb_mr->rkey) {
-		pr_err("Unexpected lkey %d (expect %d) or rkey %d (expect %d)\n",
-		       mr->lkey, pb_mr->lkey, mr->rkey, pb_mr->rkey);
-		return -1;
+		pr_err("Registered MR (0x%p, +0x%lx) at PD %d with flags %x orig at 0x%lx: handle %d lkey %d rkey %d\n",
+		       mr->addr, mr->length, mr->pd->handle, pb_mr->access, pb_mr->address, mr->handle, mr->lkey, mr->rkey);
+
+		if (mr->lkey != pb_mr->lkey || mr->rkey != pb_mr->rkey) {
+			pr_err("Unexpected lkey %d (expect %d) or rkey %d (expect %d)\n",
+			       mr->lkey, pb_mr->lkey, mr->rkey, pb_mr->rkey);
+			if (i-- == 0) {
+				pr_err("Too many trials\n");
+				return -1;
+			}
+
+			ibv_dereg_mr(mr);
+			continue;
+		}
+
+		break;
 	}
 
 	open_mrs[mr->handle] = mr;
