@@ -12,6 +12,16 @@
 #undef	LOG_PREFIX
 #define LOG_PREFIX "ibverbs: "
 
+static LIST_HEAD(ibverbs_restore_objects);
+
+struct ibverbs_list_entry {
+	struct list_head	restore_list;
+	struct ibv_device	*ibdev;
+	struct ibv_context	*ibcontext;
+	IbverbsObject		*obj;
+	int 			(*restore)(struct ibverbs_list_entry *entry);
+};
+
 static struct ibv_device* find_ibdev(const char *ib_devname)
 {
 	int num_of_device;
@@ -108,13 +118,14 @@ static int dump_one_ibverbs_pd(IbverbsObject **pb_obj, struct ib_uverbs_dump_obj
 	return sizeof(*dump_pd);
 }
 
-static int dump_one_ibverbs_mr(IbverbsObject **pb_obj, struct ib_uverbs_dump_object *dump_obj)
+static int dump_one_ibverbs_mr(IbverbsObject **pb_obj, struct ib_uverbs_dump_object *dump_obj,
+			       struct vm_area_list *vmas)
 {
 	struct ib_uverbs_dump_object_mr *dump_mr;
 	IbverbsMr *mr;
 
 	dump_mr = container_of(dump_obj, struct ib_uverbs_dump_object_mr, obj);
-	pr_err("Found object MR: %d\n", dump_mr->obj.handle);
+	pr_err("Found object MR: %d @0x%llx + 0x%llx\n", dump_mr->obj.handle, dump_mr->address, dump_mr->length);
 
 	*pb_obj = xmalloc(sizeof(**pb_obj));
 	if (!*pb_obj) {
@@ -138,6 +149,17 @@ static int dump_one_ibverbs_mr(IbverbsObject **pb_obj, struct ib_uverbs_dump_obj
 	(*pb_obj)->type = IBVERBS_OBJECT_TYPE__MR;
 	(*pb_obj)->handle = dump_mr->obj.handle;
 	(*pb_obj)->mr = mr;
+
+	struct vma_area *vma, *p;
+	list_for_each_entry_safe(vma, p, &vmas->h, list) {
+		if ((vma->e->end < mr->address) ||
+		    (mr->address + mr->length < vma->e->start)) {
+			/* No overlap. */
+			continue;
+		}
+
+		vma->e->status |= VMA_AREA_IBVERBS;
+	}
 
 	return sizeof(*dump_mr);
 
@@ -208,7 +230,7 @@ static int dump_one_ibverbs(int lfd, u32 id, const struct fd_parms *p)
 			ret = dump_one_ibverbs_pd(&ibv.objs[i], obj);
 			break;
 		case IB_UVERBS_OBJECT_MR:
-			ret = dump_one_ibverbs_mr(&ibv.objs[i], obj);
+			ret = dump_one_ibverbs_mr(&ibv.objs[i], obj, p->vmas);
 			break;
 		default:
 			pr_err("Unknown object type: %d\n", obj->type);
@@ -246,8 +268,10 @@ static int last_event_fd;
 static struct ibv_pd *open_pds[ELEM_COUNT];
 static struct ibv_mr *open_mrs[ELEM_COUNT];
 
-static int ibverbs_restore_pd(struct ibv_context *ibcontext, IbverbsObject *obj)
+static int ibverbs_restore_pd(struct ibverbs_list_entry *entry)
 {
+	struct ibv_context *ibcontext = entry->ibcontext;
+	IbverbsObject *obj = entry->obj;
 	struct ibv_pd *pd;
 	pd = ibv_alloc_pd(ibcontext);
 	if (!pd) {
@@ -265,28 +289,41 @@ static int ibverbs_restore_pd(struct ibv_context *ibcontext, IbverbsObject *obj)
 	return 0;
 }
 
-static int ibverbs_restore_mr(IbverbsObject *obj)
+struct remap_addr {
+	uint64_t start;
+	uint64_t premmapped;
+	uint64_t end;
+};
+
+struct remap_addr remap_addr;
+
+static uint64_t convert_to_remmapped_addr(uint64_t addr)
 {
+	return remap_addr.premmapped + (addr - remap_addr.start);
+}
+
+static int ibverbs_restore_mr(struct ibverbs_list_entry *entry)
+{
+	IbverbsObject *obj = entry->obj;
 	IbverbsMr *pb_mr = obj->mr;
 	struct ibv_pd *pd = open_pds[pb_mr->pd_handle];
 	struct ibv_mr *mr;
-#define TRACE 1
-#if TRACE
-	int fd = open("/sys/kernel/debug/tracing/tracing_on", O_WRONLY);
-	write(fd, "1", 1);
-#endif
-	mr = ibv_reg_mr(pd, (void *)pb_mr->address, pb_mr->length, pb_mr->access);
-#if TRACE
-	write(fd, "0", 1);
-	close(fd);
-#endif
+	uint64_t addr = convert_to_remmapped_addr(pb_mr->address);
+	mr = ibv_reg_mr(pd, (void *)addr, pb_mr->length, pb_mr->access);
 	if (!mr) {
-		pr_err("Failed to register memory region (0x%lx, +0x%lx) at PD %d with flags %x\n",
-		       pb_mr->address, pb_mr->length, pb_mr->pd_handle, pb_mr->access);
+		pr_err("Failed to register memory region (0x%lx, +0x%lx) at PD %d with flags %x premmapped at 0x%lx\n",
+		       pb_mr->address, pb_mr->length, pb_mr->pd_handle, pb_mr->access, addr);
+		return -1;
 	}
 
-	pr_err("Registered MR (0x%p, +0x%lx) at PD %d with flags %x: handle %d lkey %d rkey %d\n",
-	       mr->addr, mr->length, mr->pd->handle, pb_mr->access, mr->handle, mr->lkey, mr->rkey);
+	pr_err("Registered MR (0x%p, +0x%lx) at PD %d with flags %x orig at 0x%lx: handle %d lkey %d rkey %d\n",
+	       mr->addr, mr->length, mr->pd->handle, pb_mr->access, pb_mr->address, mr->handle, mr->lkey, mr->rkey);
+
+	if (mr->lkey != pb_mr->lkey || mr->rkey != pb_mr->rkey) {
+		pr_err("Unexpected lkey %d (expect %d) or rkey %d (expect %d)\n",
+		       mr->lkey, pb_mr->lkey, mr->rkey, pb_mr->rkey);
+		return -1;
+	}
 
 	open_mrs[mr->handle] = mr;
 
@@ -321,27 +358,29 @@ static int ibverbs_open(struct file_desc *d, int *new_fd)
 		goto err_close;
 	}
 
-	pr_err("Available PDs total: %ld\n", info->ibv->n_objs);
+	pr_err("Available objects for the context: %ld\n", info->ibv->n_objs);
 
-	for (int i = info->ibv->n_objs - 1; i >= 0 ; i--) {
-		IbverbsObject *obj = info->ibv->objs[i];
-		int ret;
+	/* The reverse order of objects in the list is important, because the
+	 * dump we get first has MR, then PD */
+	for (int i = 0; i < info->ibv->n_objs ; i++) {
+		struct ibverbs_list_entry *le = xzalloc(sizeof(*le));
 
-		pr_err("Restoring object %d of type %d\n", i, obj->type);
-		switch (obj->type) {
+		le->ibdev = ibdev;
+		le->ibcontext = ibcontext;
+		le->obj = info->ibv->objs[i];
+
+		switch (le->obj->type) {
 		case IBVERBS_OBJECT_TYPE__PD:
-			ret = ibverbs_restore_pd(ibcontext, obj);
+			le->restore = ibverbs_restore_pd;
 			break;
 		case IBVERBS_OBJECT_TYPE__MR:
-			ret = ibverbs_restore_mr(obj);
+			le->restore = ibverbs_restore_mr;
 			break;
 		default:
-			pr_err("Object type is not supported: %d\n", obj->type);
+			pr_err("Object type is not supported: %d\n", le->obj->type);
 			goto err_close;
 		}
-		if (ret < 0) {
-			goto err_close;
-		}
+		list_add(&le->restore_list, &ibverbs_restore_objects);
 	}
 
 	pr_info("Opened a device %d %d", ibcontext->cmd_fd, ibcontext->async_fd);
@@ -380,6 +419,44 @@ struct collect_image_info ibv_cinfo = {
 	.priv_size = sizeof(struct ibverbs_file_info),
 	.collect = collect_one_ibverbs,
 };
+
+static int ibverbs_area_open(int pid, struct vma_area *vma)
+{
+	if (!vma_area_is(vma, VMA_AREA_IBVERBS)) {
+		pr_err("Unknown area found\n");
+		return -1;
+	}
+
+	pr_err("Found ibverbs area 0x%08lx - 0x%08lx tgt 0x%08lx\n", vma->e->start, vma->e->end, vma->premmaped_addr);
+	remap_addr.start = vma->e->start;
+	remap_addr.end = vma->e->end;
+	remap_addr.premmapped = vma->premmaped_addr;
+
+	return 0;
+}
+
+int collect_ibverbs_area(struct vma_area *vma)
+{
+	vma->vm_open = ibverbs_area_open;
+	return 0;
+}
+
+int restore_ibverbs(struct task_restore_args *ta)
+{
+	struct ibverbs_list_entry *le;
+
+	int i = 0;
+	list_for_each_entry(le, &ibverbs_restore_objects, restore_list) {
+		pr_err("Restoring object %d of type %d\n", i++, le->obj->type);
+		int ret = le->restore(le);
+		if (ret < 0) {
+			pr_err("Failed to restore object of type: %d\n", le->obj->type);
+			return -1;
+		}
+	}
+
+	return 0;
+}
 
 /* Ibevent related functions */
 

@@ -20,4 +20,9 @@ static inline int is_ibverbs(dev_t rdev, dev_t dev)
 extern struct collect_image_info ibv_cinfo;
 extern struct collect_image_info ibe_cinfo;
 
+struct task_restore_args;
+int restore_ibverbs(struct task_restore_args *ta);
+
+int collect_ibverbs_area(struct vma_area *vma);
+
 #endif

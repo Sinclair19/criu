@@ -29,6 +29,7 @@
 #include "pagemap-cache.h"
 #include "fault-injection.h"
 #include "prctl.h"
+#include "ibverbs.h"
 #include <compel/compel.h>
 
 #include "protobuf.h"
@@ -626,6 +627,8 @@ int prepare_mm_pid(struct pstree_item *i)
 			ret = collect_filemap(vma);
 		else if (vma_area_is(vma, VMA_AREA_SOCKET))
 			ret = collect_socket_map(vma);
+		else if (vma_area_is(vma, VMA_AREA_IBVERBS))
+			ret = collect_ibverbs_area(vma);
 		else
 			ret = 0;
 		if (ret)
@@ -852,6 +855,12 @@ static inline bool vma_force_premap(struct vma_area *vma, struct list_head *head
 				return true;
 			}
 		}
+	}
+
+	if (vma_area_is(vma, VMA_AREA_IBVERBS)) {
+		pr_debug("Force premmap for ibverbs area 0x%"PRIx64":0x%"PRIx64"\n",
+			 vma->e->start, vma->e->end);
+		return true;
 	}
 
 	return false;
