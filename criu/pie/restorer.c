@@ -39,7 +39,9 @@
 #include "common/lock.h"
 #include "common/page.h"
 #include "restorer.h"
+#include "restore-ibverbs.h"
 #include "aio.h"
+#include "ibverbs.h"
 #include "seccomp.h"
 
 #include "images/creds.pb-c.h"
@@ -868,6 +870,30 @@ populate:
 	return 0;
 }
 
+static int restore_ibverbs_object(struct rst_ibverbs_object *ribv)
+{
+	switch (ribv->type) {
+	case RST_IBVERBS_MR: {
+		if (rst_ibv_reg_mr(&ribv->mr)) {
+			pr_err("Failed to register MR (0x%lx, +0x%lx) at PD %d with flags %x\n",
+			       ribv->mr.start, ribv->mr.length, ribv->mr.pd_handle, ribv->mr.access);
+			return -1;
+		}
+
+		pr_err("Registered MR (0x%lx, +0x%lx) at PD %d with flags %x : handle %d lkey %d rkey %d\n",
+		       ribv->mr.start, ribv->mr.length, ribv->mr.pd_handle, ribv->mr.access,
+		       ribv->mr.handle, ribv->mr.lkey, ribv->mr.rkey);
+
+
+		break;
+	}
+	default:
+		return -1;
+	}
+
+	return 0;
+}
+
 static void rst_tcp_repair_off(struct rst_tcp_sock *rts)
 {
 	int aux, ret;
@@ -1639,6 +1665,11 @@ long __export_restore_task(struct task_restore_args *args)
 
 	for (i = 0; i < args->rings_n; i++)
 		if (restore_aio_ring(&args->rings[i]) < 0)
+			goto core_restore_end;
+
+	/* When all memory is ready, time to restore ibverbs state */
+	for (i = 0; i < args->ibverbs_n; i++)
+		if (restore_ibverbs_object(&args->ibverbs[i]) < 0)
 			goto core_restore_end;
 
 	/*

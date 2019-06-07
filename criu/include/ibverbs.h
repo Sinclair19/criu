@@ -21,8 +21,32 @@ extern struct collect_image_info ibv_cinfo;
 extern struct collect_image_info ibe_cinfo;
 
 struct task_restore_args;
-int restore_ibverbs(struct task_restore_args *ta);
+int prepare_ibverbs(struct task_restore_args *ta);
 
 int collect_ibverbs_area(struct vma_area *vma);
+
+enum rst_ibverbs_object_type {
+	RST_IBVERBS_INVALID = 0,
+	RST_IBVERBS_MR = 1,
+};
+
+struct rst_ibverbs_object_mr {
+	uintptr_t	start;
+	uint64_t	hca_va;
+	size_t		length;
+	int		ctx_handle;
+	int		pd_handle;
+	int		access;
+	int		lkey;
+	int		rkey;
+	int		handle;
+};
+
+struct rst_ibverbs_object {
+	unsigned int type;
+	union {
+		struct rst_ibverbs_object_mr mr;
+	};
+};
 
 #endif

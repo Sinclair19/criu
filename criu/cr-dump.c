@@ -1339,7 +1339,7 @@ static int dump_one_task(struct pstree_item *item, InventoryEntry *parent_ie)
 	}
 
 	if (dfds) {
-		ret = dump_task_files_seized(parasite_ctl, item, dfds, &vmas);
+		ret = dump_task_files_seized(parasite_ctl, item, dfds);
 		if (ret) {
 			pr_err("Dump files (pid: %d) failed with %d\n", pid, ret);
 			goto err_cure;

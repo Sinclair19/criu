@@ -18,6 +18,7 @@ LDS		:= compel/arch/$(SRCARCH)/scripts/compel-pack.lds.S
 
 restorer-obj-y	+= parasite-vdso.o ./$(ARCH_DIR)/vdso-pie.o
 restorer-obj-y	+= ./$(ARCH_DIR)/restorer.o
+restorer-obj-y	+= restorer-ibverbs.o
 
 ifeq ($(ARCH),x86)
         ifeq ($(CONFIG_COMPAT),y)

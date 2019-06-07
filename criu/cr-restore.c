@@ -950,7 +950,7 @@ static int restore_one_alive_task(int pid, CoreEntry *core)
 	if (prepare_vmas(current, ta))
 		return -1;
 
-	if (restore_ibverbs(ta) < 0)
+	if (prepare_ibverbs(ta) < 0)
 		return -1;
 
 	/*

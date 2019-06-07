@@ -52,7 +52,6 @@ struct fd_parms {
 
 	struct parasite_ctl *fd_ctl;
 	struct parasite_drain_fd *dfds;
-	struct vm_area_list *vmas;
 };
 
 #define FD_PARMS_INIT			\
@@ -148,8 +147,7 @@ extern int do_dump_gen_file(struct fd_parms *p, int lfd,
 			    FdinfoEntry *e);
 struct parasite_drain_fd;
 int dump_task_files_seized(struct parasite_ctl *ctl, struct pstree_item *item,
-		struct parasite_drain_fd *dfds,
-		struct vm_area_list *vmas);
+		struct parasite_drain_fd *dfds);
 int predump_task_files(int pid);
 
 extern void file_desc_init(struct file_desc *d, u32 id, struct file_desc_ops *ops);
