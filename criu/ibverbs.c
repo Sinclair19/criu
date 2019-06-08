@@ -300,7 +300,7 @@ static int ibverbs_restore_mr(struct ibverbs_list_entry *entry, struct task_rest
 	ribv->mr.lkey = pb_mr->lkey;
 	ribv->mr.rkey = pb_mr->rkey;
 	ribv->mr.handle = obj->handle;
-	ribv->mr.ctx_handle = entry->context->cmd_fd;
+	ribv->mr.ctx_handle = entry->ibcontext->cmd_fd;
 
 	return 0;
 }
@@ -400,6 +400,7 @@ int prepare_ibverbs(struct task_restore_args *ta)
 	struct ibverbs_list_entry *le;
 
 	ta->ibverbs = (struct rst_ibverbs_object *)rst_mem_align_cpos(RM_PRIVATE);
+	ta->ibverbs_n = 0;
 
 	int i = 0;
 	list_for_each_entry(le, &ibverbs_restore_objects, restore_list) {
