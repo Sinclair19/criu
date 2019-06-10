@@ -28,6 +28,7 @@ int collect_ibverbs_area(struct vma_area *vma);
 enum rst_ibverbs_object_type {
 	RST_IBVERBS_INVALID = 0,
 	RST_IBVERBS_MR = 1,
+	RST_IBVERBS_CQ = 2,
 };
 
 struct rst_ibverbs_object_mr {
@@ -42,10 +43,19 @@ struct rst_ibverbs_object_mr {
 	int		handle;
 };
 
+struct rst_ibverbs_object_cq {
+	int ctx_handle;
+	int cqe;
+	int comp_channel;
+	int comp_vector;
+	int handle;
+};
+
 struct rst_ibverbs_object {
 	unsigned int type;
 	union {
 		struct rst_ibverbs_object_mr mr;
+		struct rst_ibverbs_object_cq cq;
 	};
 };
 

@@ -887,6 +887,15 @@ static int restore_ibverbs_object(struct rst_ibverbs_object *ribv)
 
 		break;
 	}
+	case RST_IBVERBS_CQ: {
+		if (rst_ibv_create_cq(&ribv->cq)) {
+			pr_err("Failed to register CQ\n");
+			return -1;
+		}
+
+		pr_err("Created CQ\n");
+		break;
+	}
 	default:
 		return -1;
 	}

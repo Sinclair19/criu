@@ -1,4 +1,5 @@
 #include <infiniband/verbs.h>
+#include <rdma/rdma_user_rxe.h>
 
 #include "files.h"
 #include "fdinfo.h"
@@ -155,6 +156,38 @@ static int dump_one_ibverbs_mr(IbverbsObject **pb_obj, struct ib_uverbs_dump_obj
 
 }
 
+static int dump_one_ibverbs_cq(IbverbsObject **pb_obj, struct ib_uverbs_dump_object *dump_obj)
+{
+	struct ib_uverbs_dump_object_cq *dump_cq;
+	IbverbsCq *cq;
+
+	dump_cq = container_of(dump_obj, struct ib_uverbs_dump_object_cq, obj);
+
+	pr_err("Found object CQ: %d\n", dump_cq->obj.handle);
+
+	*pb_obj = xmalloc(sizeof(**pb_obj));
+	if (!*pb_obj) {
+		return -1;
+	}
+	ibverbs_object__init(*pb_obj);
+	cq = xmalloc(sizeof(*cq));
+	if (!cq) {
+		xfree(*pb_obj);
+		return -1;
+	}
+	ibverbs_cq__init(cq);
+
+	cq->cqe = dump_cq->cqe;
+	cq->comp_channel = dump_cq->comp_channel;
+	cq->comp_vector = dump_cq->comp_vector;
+
+	(*pb_obj)->type = IBVERBS_OBJECT_TYPE__CQ;
+	(*pb_obj)->handle = dump_cq->obj.handle;
+	(*pb_obj)->cq = cq;
+
+	return sizeof(*dump_cq);
+}
+
 static int dump_one_ibverbs(int lfd, u32 id, const struct fd_parms *p)
 {
 	struct cr_img *img;
@@ -221,6 +254,9 @@ static int dump_one_ibverbs(int lfd, u32 id, const struct fd_parms *p)
 			break;
 		case IB_UVERBS_OBJECT_MR:
 			ret = dump_one_ibverbs_mr(&ibv.objs[i], obj);
+			break;
+		case IB_UVERBS_OBJECT_CQ:
+			ret = dump_one_ibverbs_cq(&ibv.objs[i], obj);
 			break;
 		default:
 			pr_err("Unknown object type: %d\n", obj->type);
@@ -305,6 +341,37 @@ static int ibverbs_restore_mr(struct ibverbs_list_entry *entry, struct task_rest
 	return 0;
 }
 
+struct rxe_cq {
+        struct ibv_cq           ibv_cq;
+        struct mminfo           mmap_info;
+        struct rxe_queue                *queue;
+        pthread_spinlock_t      lock;
+};
+
+static int ibverbs_restore_cq(struct ibverbs_list_entry *entry, struct task_restore_args *ta)
+{
+	IbverbsObject *obj = entry->obj;
+	IbverbsCq *cq = obj->cq;
+
+	struct rst_ibverbs_object *ribv;
+	ribv = rst_mem_alloc(sizeof(*ribv), RM_PRIVATE);
+	if (!ribv) {
+		pr_err("Failed to allocate memory for rst_ibverbs_object\n");
+		return -1;
+	}
+	ta->ibverbs_n++;
+
+	ribv->type = RST_IBVERBS_CQ;
+	ribv->cq.cqe = cq->cqe;
+	ribv->cq.comp_channel = cq->comp_channel;
+	ribv->cq.comp_vector = cq->comp_vector;
+	ribv->cq.handle = obj->handle;
+	ribv->cq.ctx_handle = entry->ibcontext->cmd_fd;
+
+	return 0;
+}
+
+
 static int ibverbs_open(struct file_desc *d, int *new_fd)
 {
 	struct ibverbs_file_info *info;
@@ -326,6 +393,8 @@ static int ibverbs_open(struct file_desc *d, int *new_fd)
 		pr_perror("Failed to open the device\n");
 		goto err;
 	}
+	pr_err("Opened device: cmd_fd %d async_fd %d file_desc->id %d\n",
+	       ibcontext->cmd_fd, ibcontext->async_fd, d->id);
 
 	if (rst_file_params(ibcontext->cmd_fd, info->ibv->fown, info->ibv->flags)) {
 		pr_perror("Can't restore params on ibverbs %#08x\n",
@@ -350,6 +419,9 @@ static int ibverbs_open(struct file_desc *d, int *new_fd)
 			break;
 		case IBVERBS_OBJECT_TYPE__MR:
 			le->restore = ibverbs_restore_mr;
+			break;
+		case IBVERBS_OBJECT_TYPE__CQ:
+			le->restore = ibverbs_restore_cq;
 			break;
 		default:
 			pr_err("Object type is not supported: %d\n", le->obj->type);
@@ -474,7 +546,6 @@ static int ibevent_open(struct file_desc *d, int *new_fd)
 	struct ibevent_file_info *info;
 	int tmp;
 
-	pr_info("%s:%d\n", __func__, __LINE__);
 	info = container_of(d, struct ibevent_file_info, d);
 
 	tmp = ibevent();
@@ -490,6 +561,7 @@ static int ibevent_open(struct file_desc *d, int *new_fd)
 	/* 	goto err_close; */
 	/* } */
 
+	pr_err("opened ibevent: id %d fd %d\n", d->id, tmp);
 	*new_fd = tmp;
 	return 0;
 

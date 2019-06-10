@@ -39,11 +39,18 @@ message ibverbs_mr {
 	required uint32	rkey		= 7;
 };
 
+message ibverbs_cq {
+	required uint32 cqe		= 1;
+	required uint32 comp_channel	= 2;
+	required uint32 comp_vector	= 3;
+};
+
 message ibverbs_object {
 	required IbverbsObjectType	type	= 1;
 	required uint32			handle	= 2;
 	optional ibverbs_pd		pd	= 3;
 	optional ibverbs_mr		mr	= 4;
+	optional ibverbs_cq		cq	= 5;
 };
 
 message ibverbs_entry {
