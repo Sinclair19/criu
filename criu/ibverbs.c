@@ -378,20 +378,17 @@ static int ibverbs_restore_cq(struct ibverbs_list_entry *entry, struct task_rest
 	IbverbsObject *obj = entry->obj;
 	IbverbsCq *cq = obj->cq;
 
-	struct rst_ibverbs_object *ribv;
-	ribv = rst_mem_alloc(sizeof(*ribv), RM_PRIVATE);
-	if (!ribv) {
-		pr_err("Failed to allocate memory for rst_ibverbs_object\n");
+	if (cq->comp_channel != -1) {
+		pr_err("BBBSHSTHSHT\n");
 		return -1;
 	}
-	ta->ibverbs_n++;
 
-	ribv->type = RST_IBVERBS_CQ;
-	ribv->cq.cqe = cq->cqe;
-	ribv->cq.comp_channel = cq->comp_channel;
-	ribv->cq.comp_vector = cq->comp_vector;
-	ribv->cq.handle = obj->handle;
-	ribv->cq.ctx_handle = entry->ibcontext->cmd_fd;
+	struct ibv_cq *ibv_cq;
+	ibv_cq = ibv_create_cq(entry->ibcontext, cq->cqe, NULL, NULL, cq->comp_vector);
+	if (!ibv_cq) {
+		pr_err("Failed to create CQ\n");
+		return -1;
+	}
 
 	return 0;
 }
