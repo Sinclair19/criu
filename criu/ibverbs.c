@@ -305,6 +305,7 @@ const struct fdtype_ops ibverbs_dump_ops = {
 #define ELEM_COUNT 10
 static int last_event_fd;
 static struct ibv_pd *open_pds[ELEM_COUNT];
+static struct ibv_mr *open_mrs[ELEM_COUNT];
 
 static int ibverbs_restore_pd(struct ibverbs_list_entry *entry, struct task_restore_args *ta)
 {
@@ -332,7 +333,6 @@ static int ibverbs_restore_mr(struct ibverbs_list_entry *entry, struct task_rest
 	IbverbsObject *obj = entry->obj;
 	IbverbsMr *pb_mr = obj->mr;
 
-	return 0;
 	/* XXX: dirty hack to ensure the same lkey */
 	int i = 300;
 	while (1) {
@@ -360,29 +360,10 @@ static int ibverbs_restore_mr(struct ibverbs_list_entry *entry, struct task_rest
 			continue;
 		}
 
+		open_mrs[mr->handle] = mr;
+
 		return 0;
 	}
-
-	struct rst_ibverbs_object *ribv;
-	ribv = rst_mem_alloc(sizeof(*ribv), RM_PRIVATE);
-	if (!ribv) {
-		pr_err("Failed to allocate memory for rst_ibverbs_object\n");
-		return -1;
-	}
-	ta->ibverbs_n++;
-
-	ribv->type = RST_IBVERBS_MR;
-	ribv->mr.start = pb_mr->address;
-	ribv->mr.hca_va = pb_mr->address;
-	ribv->mr.length = pb_mr->length;
-	ribv->mr.access = pb_mr->access;
-	ribv->mr.pd_handle = pb_mr->pd_handle;
-	ribv->mr.lkey = pb_mr->lkey;
-	ribv->mr.rkey = pb_mr->rkey;
-	ribv->mr.handle = obj->handle;
-	ribv->mr.ctx_handle = entry->ibcontext->cmd_fd;
-
-	return 0;
 }
 
 struct rxe_cq {
