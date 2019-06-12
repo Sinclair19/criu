@@ -21,7 +21,7 @@ extern struct collect_image_info ibv_cinfo;
 extern struct collect_image_info ibe_cinfo;
 
 struct task_restore_args;
-int prepare_ibverbs(struct task_restore_args *ta);
+int prepare_ibverbs(struct pstree_item *me, struct task_restore_args *ta);
 
 int collect_ibverbs_area(struct vma_area *vma);
 

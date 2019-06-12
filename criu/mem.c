@@ -35,6 +35,105 @@
 #include "protobuf.h"
 #include "images/pagemap.pb-c.h"
 
+static struct rst_address_range *address_ranges = NULL;
+static int address_range_count = 0;
+
+int keep_address_range(u64 start, u64 size)
+{
+	struct rst_address_range range = {
+		.start = start,
+		.size = size,
+	};
+
+	address_range_count++;
+	address_ranges = xrealloc(address_ranges, address_range_count * sizeof(range));
+	if (!address_ranges) {
+		return -1;
+	}
+
+	pr_err("Keeping address range: 0x%lx +0x%lx\n", start, size);
+	address_ranges[address_range_count - 1] = range;
+
+	return 0;
+}
+
+static int compare_ranges(const void *_a, const void *_b)
+{
+	const struct rst_address_range *a = _a;
+	const struct rst_address_range *b = _b;
+	if (a->start < b->start) {
+		return -1;
+	} else if (a->start > b->start) {
+		return 1;
+	}
+
+	/* a->start == b->start */
+
+	if (a->size < b->start) {
+		return -1;
+	} else if (a->start > b->start) {
+		return 1;
+	}
+
+	return 0;
+}
+
+int prepare_kept_ranges(struct task_restore_args *ta)
+{
+	for (unsigned i = 0; i < address_range_count; i++) {
+		u64 start = address_ranges[i].start;
+		u64 end = address_ranges[i].start + address_ranges[i].size;
+		pr_err("Additional registered kept ranges (0x%lx-0x%lx)\n", start, end);
+	}
+
+	ta->kept_ranges = (struct rst_address_range *)rst_mem_align_cpos(RM_PRIVATE);
+	ta->kept_ranges_n = address_range_count + 2;
+
+	struct rst_address_range *rranges;
+	/* Reserve memory for premmaped and bootstrap ranges */
+	unsigned long size = sizeof(*rranges) * (address_range_count + 2);
+	rranges = rst_mem_alloc(size, RM_PRIVATE);
+
+	memcpy(rranges, address_ranges, sizeof(*rranges) * address_range_count);
+
+	return 0;
+}
+
+/* Insertion sort */
+static void isort(void *start, unsigned int count, unsigned int size,
+		  int (*compar)(const void*, const void*))
+{
+	for (int i = 0; i < count - 1; i++) {
+		int min_j = i;
+		for (int j = i + 1; j < count; j++) {
+			if (compar(start + size * j, start + size * min_j) < 0) {
+				min_j = j;
+			}
+		}
+		if (min_j != i) {
+			/* swap elements */
+			for (int k = 0; k < size; k++) {
+				char tmp;
+				tmp = *(char*)(start + size * i + k);
+				*(char*)(start + size * i + k) = *(char*)(start + size * min_j + k);
+				*(char*)(start + size * min_j + k) = tmp;
+			}
+		}
+	}
+}
+
+void finalize_kept_ranges(struct task_restore_args *ta)
+{
+	int n = ta->kept_ranges_n;
+	ta->kept_ranges[n - 2].start = ta->premmapped_addr;
+	ta->kept_ranges[n - 2].size = ta->premmapped_len;
+
+	ta->kept_ranges[n - 1].start = (u64) ta->bootstrap_start;
+	ta->kept_ranges[n - 1].size = ta->bootstrap_len;
+
+	isort(ta->kept_ranges, ta->kept_ranges_n, sizeof(*ta->kept_ranges), compare_ranges);
+}
+
 static int task_reset_dirty_track(int pid)
 {
 	int ret;
@@ -627,6 +726,8 @@ int prepare_mm_pid(struct pstree_item *i)
 			ret = collect_filemap(vma);
 		else if (vma_area_is(vma, VMA_AREA_SOCKET))
 			ret = collect_socket_map(vma);
+		else if (vma_area_is(vma, VMA_AREA_IBVERBS))
+			ret = collect_ibverbs_area(vma);
 		else
 			ret = 0;
 		if (ret)
@@ -774,6 +875,11 @@ static int premap_private_vma(struct pstree_item *t, struct vma_area *vma, void 
 				pr_err("Can't fixup VMA's fd\n");
 				return -1;
 			}
+		} else if (vma_area_is(vma, VMA_AREA_IBVERBS)) {
+			ret = vma->vm_open(vpid(t), vma);
+			if (ret < 0) {
+				pr_err("Can't fixup ibverbs VMA\n");
+			}
 		}
 
 		/*
@@ -824,7 +930,8 @@ static int premap_private_vma(struct pstree_item *t, struct vma_area *vma, void 
 		vma->premmaped_addr += PAGE_SIZE;
 	}
 
-	if (vma_area_is(vma, VMA_FILE_PRIVATE))
+	if (vma_area_is(vma, VMA_FILE_PRIVATE) ||
+	    vma_area_is(vma, VMA_AREA_IBVERBS))
 		vma->vm_open = NULL; /* prevent from 2nd open in prepare_vmas */
 
 	*tgt_addr += size;
@@ -853,6 +960,12 @@ static inline bool vma_force_premap(struct vma_area *vma, struct list_head *head
 				return true;
 			}
 		}
+	}
+
+	if (vma_area_is(vma, VMA_AREA_IBVERBS)) {
+		pr_debug("Force premmap for ibverbs area 0x%"PRIx64":0x%"PRIx64"\n",
+			 vma->e->start, vma->e->end);
+		return true;
 	}
 
 	return false;

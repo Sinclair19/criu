@@ -130,7 +130,8 @@ static inline bool vma_entry_can_be_lazy(VmaEntry *e)
 		(e->flags & MAP_PRIVATE) &&
 		!(e->flags & MAP_LOCKED) &&
 		!(vma_entry_is(e, VMA_AREA_VDSO)) &&
-		!(vma_entry_is(e, VMA_AREA_VSYSCALL)));
+		!(vma_entry_is(e, VMA_AREA_VSYSCALL)) &&
+		!(vma_entry_is(e, VMA_AREA_IBVERBS)));
 }
 
 #endif /* __CR_VMA_H__ */

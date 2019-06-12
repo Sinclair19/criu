@@ -6,6 +6,7 @@
 #include "files-reg.h"
 #include "imgset.h"
 #include "ibverbs.h"
+#include "mem.h"
 #include "restorer.h"
 #include "rst-malloc.h"
 
@@ -121,7 +122,8 @@ static int dump_one_ibverbs_pd(IbverbsObject **pb_obj, struct ib_uverbs_dump_obj
 	return sizeof(*dump_pd);
 }
 
-static int dump_one_ibverbs_mr(IbverbsObject **pb_obj, struct ib_uverbs_dump_object *dump_obj)
+static int dump_one_ibverbs_mr(IbverbsObject **pb_obj, struct ib_uverbs_dump_object *dump_obj,
+			       struct vm_area_list *vmas)
 {
 	struct ib_uverbs_dump_object_mr *dump_mr;
 	IbverbsMr *mr;
@@ -151,6 +153,17 @@ static int dump_one_ibverbs_mr(IbverbsObject **pb_obj, struct ib_uverbs_dump_obj
 	(*pb_obj)->type = IBVERBS_OBJECT_TYPE__MR;
 	(*pb_obj)->handle = dump_mr->obj.handle;
 	(*pb_obj)->mr = mr;
+
+	struct vma_area *vma, *p;
+	list_for_each_entry_safe(vma, p, &vmas->h, list) {
+		if ((vma->e->end < mr->address) ||
+		    (mr->address + mr->length < vma->e->start)) {
+			/* No overlap. */
+			continue;
+		}
+
+		vma->e->status |= VMA_AREA_IBVERBS;
+	}
 
 	return sizeof(*dump_mr);
 
@@ -253,7 +266,7 @@ static int dump_one_ibverbs(int lfd, u32 id, const struct fd_parms *p)
 			ret = dump_one_ibverbs_pd(&ibv.objs[i], obj);
 			break;
 		case IB_UVERBS_OBJECT_MR:
-			ret = dump_one_ibverbs_mr(&ibv.objs[i], obj);
+			ret = dump_one_ibverbs_mr(&ibv.objs[i], obj, p->vmas);
 			break;
 		case IB_UVERBS_OBJECT_CQ:
 			ret = dump_one_ibverbs_cq(&ibv.objs[i], obj);
@@ -319,6 +332,37 @@ static int ibverbs_restore_mr(struct ibverbs_list_entry *entry, struct task_rest
 	IbverbsObject *obj = entry->obj;
 	IbverbsMr *pb_mr = obj->mr;
 
+	return 0;
+	/* XXX: dirty hack to ensure the same lkey */
+	int i = 300;
+	while (1) {
+		struct ibv_mr *mr;
+		mr = ibv_reg_mr(open_pds[pb_mr->pd_handle],
+				(void *)pb_mr->address, pb_mr->length, pb_mr->access);
+		if (!mr) {
+			pr_err("ibv_reg_mr failed: %s\n", strerror(errno));
+			return -1;
+		}
+
+		if (pb_mr->lkey != mr->lkey || pb_mr->rkey != mr->rkey) {
+			pr_err("Unexpected lkey %d (expect %d) or rkey %d (expect %d)\n",
+			       mr->lkey, pb_mr->lkey, mr->rkey, pb_mr->rkey);
+			if (i-- == 0) {
+				pr_err("Too many trials\n");
+				return -1;
+			}
+
+			int ret = ibv_dereg_mr(mr);
+			if (ret) {
+				pr_err("Dereg failed\n");
+				return -1;
+			}
+			continue;
+		}
+
+		return 0;
+	}
+
 	struct rst_ibverbs_object *ribv;
 	ribv = rst_mem_alloc(sizeof(*ribv), RM_PRIVATE);
 	if (!ribv) {
@@ -342,10 +386,10 @@ static int ibverbs_restore_mr(struct ibverbs_list_entry *entry, struct task_rest
 }
 
 struct rxe_cq {
-        struct ibv_cq           ibv_cq;
-        struct mminfo           mmap_info;
-        struct rxe_queue                *queue;
-        pthread_spinlock_t      lock;
+	struct ibv_cq		ibv_cq;
+	struct mminfo		mmap_info;
+	struct rxe_queue	*queue;
+	pthread_spinlock_t	lock;
 };
 
 static int ibverbs_restore_cq(struct ibverbs_list_entry *entry, struct task_restore_args *ta)
@@ -467,7 +511,41 @@ struct collect_image_info ibv_cinfo = {
 	.collect = collect_one_ibverbs,
 };
 
-int prepare_ibverbs(struct task_restore_args *ta)
+static int ibverbs_area_open(int pid, struct vma_area *vma)
+{
+	if (!vma_area_is(vma, VMA_AREA_IBVERBS)) {
+		pr_err("Unknown area found\n");
+		return -1;
+	}
+
+	void *addr;
+
+	pr_err("Found ibverbs area 0x%08lx - 0x%08lx tgt 0x%08lx Anon %d, FD %ld\n", vma->e->start, vma->e->end, vma->premmaped_addr,
+	       vma->e->flags & MAP_ANONYMOUS, vma->e->fd);
+
+	addr = mmap((void *)vma->e->start, vma_entry_len(vma->e),
+		    vma->e->prot | PROT_WRITE,
+		    vma->e->flags | MAP_FIXED,
+		    vma->e->fd, vma->e->pgoff);
+	if (addr == MAP_FAILED) {
+		pr_perror("Unable to map VMA_IBVERBS");
+		return -1;
+	}
+
+	if (keep_address_range(vma->e->start, vma_entry_len(vma->e))) {
+		return -1;
+	}
+
+	return 0;
+}
+
+int collect_ibverbs_area(struct vma_area *vma)
+{
+	vma->vm_open = ibverbs_area_open;
+	return 0;
+}
+
+int prepare_ibverbs(struct pstree_item *me, struct task_restore_args *ta)
 {
 	struct ibverbs_list_entry *le;
 

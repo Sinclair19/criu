@@ -183,6 +183,9 @@ struct task_restore_args {
 	int				*inotify_fds; /* fds to cleanup inotify events at CR_STATE_RESTORE_SIGCHLD stage */
 	unsigned int			inotify_fds_n;
 
+	struct rst_address_range	*kept_ranges;
+	unsigned int			kept_ranges_n;
+
 	/* * * * * * * * * * * * * * * * * * * * */
 
 	unsigned long			task_size;

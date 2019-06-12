@@ -950,9 +950,12 @@ static int restore_one_alive_task(int pid, CoreEntry *core)
 	if (prepare_vmas(current, ta))
 		return -1;
 
-	if (prepare_ibverbs(ta) < 0)
+	if (prepare_ibverbs(current, ta) < 0)
 		return -1;
 
+	if (prepare_kept_ranges(ta) < 0) {
+		return -1;
+	}
 	/*
 	 * Sockets have to be restored in their network namespaces,
 	 * so a task namespace has to be restored after sockets.
@@ -3462,8 +3465,12 @@ static int sigreturn_restore(pid_t pid, struct task_restore_args *task_args, uns
 	RST_MEM_FIXUP_PPTR(task_args->vma_ios);
 	RST_MEM_FIXUP_PPTR(task_args->inotify_fds);
 	RST_MEM_FIXUP_PPTR(task_args->ibverbs);
+	RST_MEM_FIXUP_PPTR(task_args->kept_ranges);
 
 	task_args->compatible_mode = core_is_compat(core);
+
+	finalize_kept_ranges(task_args);
+
 	/*
 	 * Arguments for task restoration.
 	 */

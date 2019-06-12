@@ -13,6 +13,7 @@ struct vm_area_list;
 struct page_pipe;
 struct pstree_item;
 struct vma_area;
+struct task_restore_args;
 
 struct mem_dump_ctl {
 	bool			pre_dump;
@@ -21,12 +22,20 @@ struct mem_dump_ctl {
 	InventoryEntry		*parent_ie;
 };
 
+struct rst_address_range {
+	u64	start;
+	u64	size;
+};
+
 extern bool vma_has_guard_gap_hidden(struct vma_area *vma);
 extern bool page_is_zero(u64 pme);
 extern bool page_in_parent(bool dirty);
 extern int prepare_mm_pid(struct pstree_item *i);
 extern void prepare_cow_vmas(void);
 extern int do_task_reset_dirty_track(int pid);
+extern int keep_address_range(u64 start, u64 size);
+extern void finalize_kept_ranges(struct task_restore_args *ta);
+extern int prepare_kept_ranges(struct task_restore_args *ta);
 extern unsigned long dump_pages_args_size(struct vm_area_list *vmas);
 extern int parasite_dump_pages_seized(struct pstree_item *item,
 				      struct vm_area_list *vma_area_list,
@@ -44,7 +53,6 @@ extern int parasite_dump_pages_seized(struct pstree_item *item,
 #define PME_PFRAME_MASK		((1ULL << PME_PSHIFT_OFFSET) - 1)
 #define PME_PFRAME(x)		((x) & PME_PFRAME_MASK)
 
-struct task_restore_args;
 int open_vmas(struct pstree_item *t);
 int prepare_vmas(struct pstree_item *t, struct task_restore_args *ta);
 int unmap_guard_pages(struct pstree_item *t);

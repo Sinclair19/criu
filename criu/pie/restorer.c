@@ -48,6 +48,7 @@
 #include "images/mm.pb-c.h"
 #include "images/inventory.pb-c.h"
 
+#include "mem.h"
 #include "shmem.h"
 #include "restorer.h"
 
@@ -976,6 +977,15 @@ static int vma_remap(VmaEntry *vma_entry, int uffd)
 	if (src == dst)
 		return 0;
 
+	if (vma_entry_is(vma_entry, VMA_AREA_IBVERBS)) {
+		if (guard != 0) {
+			pr_err("No idea what to do with guard pages\n");
+			return -1;
+		}
+		sys_munmap((void *)src, len);
+		return 0;
+	}
+
 	if (guard != 0) {
 		/*
 		 * mremap() returns an error if a target and source vma-s are
@@ -1172,44 +1182,37 @@ void __export_unmap(void)
  * [ 1st end -- 2nd start ]
  * [ 2nd start -- task_size ]
  */
-static int unmap_old_vmas(void *premmapped_addr, unsigned long premmapped_len,
-		      void *bootstrap_start, unsigned long bootstrap_len,
+static int unmap_old_vmas(struct rst_address_range *kept_ranges, unsigned long n,
 		      unsigned long task_size)
 {
-	unsigned long s1, s2;
-	void *p1, *p2;
 	int ret;
 
-	if (premmapped_addr < bootstrap_start) {
-		p1 = premmapped_addr;
-		s1 = premmapped_len;
-		p2 = bootstrap_start;
-		s2 = bootstrap_len;
-	} else {
-		p2 = premmapped_addr;
-		s2 = premmapped_len;
-		p1 = bootstrap_start;
-		s1 = bootstrap_len;
+	for (unsigned i = 0; i < n; i++) {
+		u64 start = kept_ranges[i].start;
+		u64 end = kept_ranges[i].start + kept_ranges[i].size;
+		pr_err("Keep range (%lx-%lx)\n", start, end);
 	}
 
-	ret = sys_munmap(NULL, p1 - NULL);
-	if (ret) {
-		pr_err("Unable to unmap (%p-%p): %d\n", NULL, p1, ret);
-		return -1;
+	u64 start = 0;
+	u64 end;
+
+	/* Unmap all memeroy except the specified ranges. */
+	for (unsigned i = 0; i < n; i++) {
+		end = kept_ranges[i].start;
+		pr_err("Unmap range (%lx-%lx)\n", start, end);
+		ret = sys_munmap((void *)start, end - start);
+		if (ret) {
+			pr_err("Unable to unmap (0x%lx-0x%lx): %d\n", start, end, ret);
+		}
+		start = kept_ranges[i].start + kept_ranges[i].size;
 	}
 
-	ret = sys_munmap(p1 + s1, p2 - (p1 + s1));
+	pr_err("Unmap range (%lx-%lx)\n", start, task_size);
+	ret = sys_munmap((void *)start, task_size - start);
 	if (ret) {
-		pr_err("Unable to unmap (%p-%p): %d\n", p1 + s1, p2, ret);
-		return -1;
+		pr_err("Unable to unmap (0x%lx-0x%lx): %d\n", start, task_size, ret);
 	}
-
-	ret = sys_munmap(p2 + s2, task_size - (unsigned long)(p2 + s2));
-	if (ret) {
-		pr_err("Unable to unmap (%p-%p): %d\n",
-				p2 + s2, (void *)task_size, ret);
-		return -1;
-	}
+	pr_err("WAH\n");
 
 	return 0;
 }
@@ -1499,8 +1502,7 @@ long __export_restore_task(struct task_restore_args *args)
 			goto core_restore_end;
 	}
 
-	if (unmap_old_vmas((void *)args->premmapped_addr, args->premmapped_len,
-				bootstrap_start, bootstrap_len, args->task_size))
+	if (unmap_old_vmas(args->kept_ranges, args->kept_ranges_n, args->task_size))
 		goto core_restore_end;
 
 	/* Map vdso that wasn't parked */
