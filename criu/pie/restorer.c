@@ -982,6 +982,9 @@ static int vma_remap(VmaEntry *vma_entry, int uffd)
 			pr_err("No idea what to do with guard pages\n");
 			return -1;
 		}
+
+		/* XXX: should deliver memory into destination from the very beginning */
+		memcpy((void *)dst, (void *)src, len);
 		sys_munmap((void *)src, len);
 		return 0;
 	}
