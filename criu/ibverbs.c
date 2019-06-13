@@ -240,24 +240,30 @@ static int dump_one_ibverbs(int lfd, u32 id, const struct fd_parms *p)
 	/* XXX: hack to avoid error upon exit */
 	ctx->async_fd = lfd;
 
-	int ret;
+	int ret = -1;
 	int count;
-	char dump[256];
-	ret = ibv_dump_context(ctx, &count, dump, sizeof(dump));
+	const unsigned int dump_size = 4096;
+	void *dump = xzalloc(dump_size);
+	if (!dump) {
+		pr_err("Failed to allocate dump buffer of size %d\n", dump_size);
+		goto out;
+	}
+
+	ret = ibv_dump_context(ctx, &count, dump, dump_size);
 	if (ret) {
 		pr_err("Failed to dump protection domain: %d\n", ret);
-		return -1;
+		goto out;
 	}
+
+	pr_err("Found total Objs: %d\n", count);
 
 	ibv.n_objs = count;
 	ibv.objs = xzalloc(pb_repeated_size(&ibv, objs));
 
 	if (!ibv.objs) {
 		pr_err("Failed to allocate memory for protection domains\n");
-		return -1;
+		goto out;
 	}
-
-	pr_err("Found total Objs: %d\n", count);
 
 	void *cur_obj = dump;
 	for (int i = 0; i < count; i++) {
@@ -275,7 +281,6 @@ static int dump_one_ibverbs(int lfd, u32 id, const struct fd_parms *p)
 			break;
 		default:
 			pr_err("Unknown object type: %d\n", obj->type);
-			ret = -1;
 			break;
 		}
 		if (ret < 0) {
@@ -292,10 +297,13 @@ static int dump_one_ibverbs(int lfd, u32 id, const struct fd_parms *p)
 	}
 
  out:
-	for (int i = 0; i < count; i++) {
-		xfree(ibv.objs[i]);
+	xfree(dump);
+	if (ibv.objs) {
+		for (int i = 0; i < count; i++) {
+			xfree(ibv.objs[i]);
+		}
+		xfree(ibv.objs);
 	}
-	xfree(ibv.objs);
 	return ret;
 }
 
