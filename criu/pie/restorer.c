@@ -727,6 +727,10 @@ static unsigned long restore_mapping(VmaEntry *vma_entry)
 	 * writable since we're going to restore page
 	 * contents.
 	 */
+	if (vma_entry_is(vma_entry, VMA_AREA_IBVERBS_DEV)) {
+		return vma_entry->start;
+	}
+
 	addr = sys_mmap(decode_pointer(vma_entry->start),
 			vma_entry_len(vma_entry),
 			prot, flags,
@@ -1695,6 +1699,10 @@ long __export_restore_task(struct task_restore_args *args)
 		vma_entry = args->vmas + i;
 		if (!vma_entry->has_madv || !vma_entry->madv)
 			continue;
+
+		if (vma_entry_is(vma_entry, VMA_AREA_IBVERBS_DEV)) {
+			continue;
+		}
 
 		for (m = 0; m < sizeof(vma_entry->madv) * 8; m++) {
 			if (vma_entry->madv & (1ul << m)) {
