@@ -192,6 +192,8 @@ static int dump_one_ibverbs_cq(IbverbsObject **pb_obj, struct ib_uverbs_dump_obj
 
 	cq->cqe = dump_cq->cqe;
 	cq->comp_channel = dump_cq->comp_channel;
+	cq->vm_start = dump_cq->vm_start;
+	cq->vm_size = dump_cq->vm_size;
 	cq->comp_vector = dump_cq->comp_vector;
 
 	(*pb_obj)->type = IBVERBS_OBJECT_TYPE__CQ;
@@ -383,10 +385,22 @@ static int ibverbs_restore_cq(struct ibverbs_list_entry *entry, struct task_rest
 		return -1;
 	}
 
-	struct ibv_cq *ibv_cq;
-	ibv_cq = ibv_create_cq(entry->ibcontext, cq->cqe, NULL, NULL, cq->comp_vector);
-	if (!ibv_cq) {
+	struct ibv_restore_object_cq restore_args;
+
+	restore_args.cqe = cq->cqe;
+	restore_args.vm_start = cq->vm_start;
+	restore_args.vm_size = cq->vm_size;
+	restore_args.comp_vector = cq->comp_vector;
+	restore_args.channel = NULL;
+
+	pr_err("WAH %d\n", __LINE__);
+	int ret = ibv_restore_object(entry->ibcontext, IB_UVERBS_OBJECT_CQ, &restore_args);
+	if (ret < 0) {
 		pr_err("Failed to create CQ\n");
+		return -1;
+	}
+
+	if (keep_address_range((u64)restore_args.vm_start, restore_args.vm_size)) {
 		return -1;
 	}
 
