@@ -203,6 +203,53 @@ static int dump_one_ibverbs_cq(IbverbsObject **pb_obj, struct ib_uverbs_dump_obj
 	return sizeof(*dump_cq);
 }
 
+static int dump_one_ibverbs_qp(IbverbsObject **pb_obj, struct ib_uverbs_dump_object *dump_obj)
+{
+	struct ib_uverbs_dump_object_qp *dump_qp;
+	IbverbsQp *qp;
+
+	dump_qp = container_of(dump_obj, struct ib_uverbs_dump_object_qp, obj);
+
+	pr_err("Found object QP: %d\n", dump_qp->obj.handle);
+
+	*pb_obj = xmalloc(sizeof(**pb_obj));
+	if (!*pb_obj) {
+		return -1;
+	}
+	ibverbs_object__init(*pb_obj);
+	qp = xmalloc(sizeof(*qp));
+	if (!qp) {
+		xfree(*pb_obj);
+		return -1;
+	}
+	ibverbs_qp__init(qp);
+
+	qp->pd_handle = dump_qp->pd_handle;
+	qp->qp_type = dump_qp->qp_type;
+	qp->srq_handle = dump_qp->srq_handle;
+	qp->sq_sig_all = dump_qp->sq_sig_all;
+
+	qp->rq_start = dump_qp->rq_start;
+	qp->rq_size = dump_qp->rq_size;
+	qp->rcq_handle = dump_qp->rcq_handle;
+
+	qp->scq_handle = dump_qp->scq_handle;
+	qp->sq_start = dump_qp->sq_start;
+	qp->sq_size = dump_qp->sq_size;
+
+	qp->max_send_wr = dump_qp->max_send_wr;
+	qp->max_recv_wr = dump_qp->max_recv_wr;
+	qp->max_send_sge = dump_qp->max_send_sge;
+	qp->max_recv_sge = dump_qp->max_recv_sge;
+	qp->max_inline_data = dump_qp->max_inline_data;
+
+	(*pb_obj)->type = IBVERBS_OBJECT_TYPE__QP;
+	(*pb_obj)->handle = dump_qp->obj.handle;
+	(*pb_obj)->qp = qp;
+
+	return sizeof(*dump_qp);
+}
+
 static int dump_one_ibverbs(int lfd, u32 id, const struct fd_parms *p)
 {
 	struct cr_img *img;
@@ -279,8 +326,12 @@ static int dump_one_ibverbs(int lfd, u32 id, const struct fd_parms *p)
 		case IB_UVERBS_OBJECT_CQ:
 			ret = dump_one_ibverbs_cq(&ibv.objs[i], obj);
 			break;
+		case IB_UVERBS_OBJECT_QP:
+			ret = dump_one_ibverbs_qp(&ibv.objs[i], obj);
+			break;
 		default:
 			pr_err("Unknown object type: %d\n", obj->type);
+			ret = -1;
 			break;
 		}
 		if (ret < 0) {
@@ -314,8 +365,31 @@ const struct fdtype_ops ibverbs_dump_ops = {
 
 #define ELEM_COUNT 10
 static int last_event_fd;
-static struct ibv_pd *open_pds[ELEM_COUNT];
-static struct ibv_mr *open_mrs[ELEM_COUNT];
+static void *objects[IB_UVERBS_OBJECT_TOTAL][ELEM_COUNT];
+
+static int ibverbs_remember_object(int object_type, int id, void *object)
+{
+	if (id >= ELEM_COUNT) {
+		return -ENOMEM;
+	}
+
+	if (objects[object_type][id] != NULL) {
+		return -EINVAL;
+	}
+
+	objects[object_type][id] = object;
+
+	return 0;
+}
+
+static void *ibverbs_get_object(int object_type, int id)
+{
+	if (id >= ELEM_COUNT) {
+		return NULL;
+	}
+
+	return objects[object_type][id];
+}
 
 static int ibverbs_restore_pd(struct ibverbs_list_entry *entry, struct task_restore_args *ta)
 {
@@ -329,13 +403,20 @@ static int ibverbs_restore_pd(struct ibverbs_list_entry *entry, struct task_rest
 
 	if (pd->handle != obj->handle) {
 		pr_err("Unexpected protection domain handle: %d vs %d\n", obj->handle, pd->handle);
-		ibv_dealloc_pd(pd);
-		return -1;
+		goto err;
 	}
 
-	open_pds[pd->handle] = pd;
+	if (ibverbs_remember_object(IB_UVERBS_OBJECT_PD, pd->handle, pd)) {
+		pr_err("Failed to remember object\n");
+		goto err;
+	}
 
+	pr_err("Restored PD object %d\n", obj->handle);
 	return 0;
+
+ err:
+	ibv_dealloc_pd(pd);
+	return -1;
 }
 
 static int ibverbs_restore_mr(struct ibverbs_list_entry *entry, struct task_restore_args *ta)
@@ -347,8 +428,15 @@ static int ibverbs_restore_mr(struct ibverbs_list_entry *entry, struct task_rest
 	int i = 300;
 	while (1) {
 		struct ibv_mr *mr;
-		mr = ibv_reg_mr(open_pds[pb_mr->pd_handle],
-				(void *)pb_mr->address, pb_mr->length, pb_mr->access);
+		struct ibv_pd *pd;
+
+		pd = ibverbs_get_object(IB_UVERBS_OBJECT_PD, pb_mr->pd_handle);
+		if (!pd) {
+			pr_err("PD object with id %d is not known\n", pb_mr->pd_handle);
+			return -1;
+		}
+
+		mr = ibv_reg_mr(pd, (void *)pb_mr->address, pb_mr->length, pb_mr->access);
 		if (!mr) {
 			pr_err("ibv_reg_mr failed: %s\n", strerror(errno));
 			return -1;
@@ -370,18 +458,15 @@ static int ibverbs_restore_mr(struct ibverbs_list_entry *entry, struct task_rest
 			continue;
 		}
 
-		open_mrs[mr->handle] = mr;
+		if (ibverbs_remember_object(IB_UVERBS_OBJECT_MR, mr->handle, mr)) {
+			pr_err("Failed to remember object\n");
+			return -1;
+		}
 
+		pr_err("Restored MR object %d\n", obj->handle);
 		return 0;
 	}
 }
-
-struct rxe_cq {
-	struct ibv_cq		ibv_cq;
-	struct mminfo		mmap_info;
-	struct rxe_queue	*queue;
-	pthread_spinlock_t	lock;
-};
 
 static int ibverbs_restore_cq(struct ibverbs_list_entry *entry, struct task_restore_args *ta)
 {
@@ -393,28 +478,106 @@ static int ibverbs_restore_cq(struct ibverbs_list_entry *entry, struct task_rest
 		return -1;
 	}
 
-	struct ibv_restore_object_cq restore_args;
+	struct ibv_restore_object_cq args;
 
-	restore_args.cqe = cq->cqe;
-	restore_args.vm_start = cq->vm_start;
-	restore_args.vm_size = cq->vm_size;
-	restore_args.comp_vector = cq->comp_vector;
-	restore_args.channel = NULL;
+	args.cqe = cq->cqe;
+	args.queue.vm_start = cq->vm_start;
+	args.queue.vm_size = cq->vm_size;
+	args.comp_vector = cq->comp_vector;
+	args.channel = NULL;
 
-	pr_err("WAH %d\n", __LINE__);
-	int ret = ibv_restore_object(entry->ibcontext, IB_UVERBS_OBJECT_CQ, &restore_args);
+	int ret = ibv_restore_object(entry->ibcontext, IB_UVERBS_OBJECT_CQ, &args);
 	if (ret < 0) {
 		pr_err("Failed to create CQ\n");
 		return -1;
 	}
 
-	if (keep_address_range((u64)restore_args.vm_start, restore_args.vm_size)) {
+	if (args.queue.vm_size > 0) {
+		if (keep_address_range((u64)args.queue.vm_start, args.queue.vm_size))
+			return -1;
+	}
+
+	if (ibverbs_remember_object(IB_UVERBS_OBJECT_CQ, args.cq->handle, args.cq)) {
+		pr_err("Failed to remember CQ object with id %d\n", args.cq->handle);
 		return -1;
 	}
 
+	pr_err("Restored CQ object %d\n", obj->handle);
 	return 0;
 }
 
+static int ibverbs_restore_qp(struct ibverbs_list_entry * entry, struct task_restore_args *ta)
+{
+	IbverbsObject *obj = entry->obj;
+	IbverbsQp *qp = obj->qp;
+
+	struct ibv_restore_object_qp args;
+
+	args.pd = ibverbs_get_object(IB_UVERBS_OBJECT_PD, qp->pd_handle);
+	if (!args.pd) {
+		pr_err("Failed to find PD object with id: %d\n", qp->pd_handle);
+		return -1;
+	}
+
+	args.attr.send_cq = ibverbs_get_object(IB_UVERBS_OBJECT_CQ, qp->scq_handle);
+	if (!args.attr.send_cq) {
+		pr_err("Failed to find PD object with id: %d\n", qp->scq_handle);
+		return -1;
+	}
+
+	args.attr.recv_cq = ibverbs_get_object(IB_UVERBS_OBJECT_CQ, qp->rcq_handle);
+	if (!args.attr.recv_cq) {
+		pr_err("Failed to find PD object with id: %d\n", qp->rcq_handle);
+		return -1;
+	}
+
+	if (qp->srq_handle != UINT32_MAX) {
+		pr_err("SRQs are not supported: %x\n", qp->scq_handle);
+		return -ENOTSUP;
+	}
+
+	args.attr.qp_context = NULL;
+	args.attr.srq = NULL;
+	args.attr.qp_type = qp->qp_type;
+	args.attr.sq_sig_all = qp->sq_sig_all;;
+
+	args.attr.cap.max_send_wr = qp->max_send_wr;
+	args.attr.cap.max_recv_wr = qp->max_recv_wr;
+	args.attr.cap.max_send_sge = qp->max_send_sge;
+	args.attr.cap.max_recv_sge = qp->max_recv_sge;
+	args.attr.cap.max_inline_data = qp->max_inline_data;
+
+	args.rq.vm_start = qp->rq_start;
+	args.rq.vm_size = qp->rq_size;
+
+	args.sq.vm_start = qp->sq_start;
+	args.sq.vm_size = qp->sq_size;
+
+	int ret = ibv_restore_object(entry->ibcontext, IB_UVERBS_OBJECT_QP, &args);
+	if (ret < 0) {
+		pr_err("Failed to restore QP\n");
+		return -1;
+	}
+
+	if (args.rq.vm_size > 0) {
+		if (keep_address_range((u64) args.rq.vm_start, args.rq.vm_size)) {
+			pr_err("Adding range %lx+ %lx failed\n",
+			       (u64) args.rq.vm_start, args.rq.vm_size);
+			return -1;
+		}
+	}
+
+	if (args.sq.vm_size > 0) {
+		if (keep_address_range((u64) args.sq.vm_start, args.sq.vm_size)) {
+			pr_err("Adding range %lx+ %lx failed\n",
+			       (u64) args.sq.vm_start, args.sq.vm_size);
+			return -1;
+		}
+	}
+
+	pr_err("Restored QP object %d\n", obj->handle);
+	return 0;
+}
 
 static int ibverbs_open(struct file_desc *d, int *new_fd)
 {
@@ -466,6 +629,9 @@ static int ibverbs_open(struct file_desc *d, int *new_fd)
 			break;
 		case IBVERBS_OBJECT_TYPE__CQ:
 			le->restore = ibverbs_restore_cq;
+			break;
+		case IBVERBS_OBJECT_TYPE__QP:
+			le->restore = ibverbs_restore_qp;
 			break;
 		default:
 			pr_err("Object type is not supported: %d\n", le->obj->type);

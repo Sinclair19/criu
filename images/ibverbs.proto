@@ -47,12 +47,31 @@ message ibverbs_cq {
 	required uint64 vm_size		= 5;
 };
 
+message ibverbs_qp {
+	required uint64 rq_start	= 1;
+	required uint64 rq_size		= 2;
+	required uint64 sq_start	= 3;
+	required uint64 sq_size		= 4;
+	required uint32 pd_handle	= 5;
+	required uint32 scq_handle	= 6;
+	required uint32 rcq_handle	= 7;
+	required uint32 srq_handle	= 8;
+	required uint32 qp_type		= 9;
+	required uint32 sq_sig_all	= 10;
+	required uint32 max_send_wr	= 11;
+	required uint32 max_recv_wr	= 12;
+	required uint32 max_send_sge	= 13;
+	required uint32 max_recv_sge	= 14;
+	required uint32 max_inline_data	= 15;
+};
+
 message ibverbs_object {
 	required IbverbsObjectType	type	= 1;
 	required uint32			handle	= 2;
 	optional ibverbs_pd		pd	= 3;
 	optional ibverbs_mr		mr	= 4;
 	optional ibverbs_cq		cq	= 5;
+	optional ibverbs_qp		qp	= 6;
 };
 
 message ibverbs_entry {
