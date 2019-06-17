@@ -244,14 +244,51 @@ static int dump_one_ibverbs_qp(IbverbsObject **pb_obj, struct ib_uverbs_dump_obj
 	}
 	ibverbs_qp__init(qp);
 
+	qp->ah_attr = xmalloc(sizeof(*qp->ah_attr));
+	if (!qp->ah_attr) {
+		xfree(qp);
+		xfree(*pb_obj);
+		return -1;
+	}
+	ibverbs_ah_attr__init(qp->ah_attr);
+
+	qp->ah_attr->dgid.data = xmalloc(sizeof(dump_qp->attr.ah_attr.grh.dgid));
+	if (!qp->ah_attr->dgid.data) {
+		xfree(qp->ah_attr);
+		xfree(qp);
+		xfree(*pb_obj);
+		return -1;
+	}
+
 	qp->pd_handle = dump_qp->pd_handle;
 	qp->qp_type = dump_qp->qp_type;
 	qp->srq_handle = dump_qp->srq_handle;
 	qp->sq_sig_all = dump_qp->sq_sig_all;
 	qp->qp_state = dump_qp->attr.qp_state;
+
 	qp->pkey_index = dump_qp->attr.pkey_index;
 	qp->port_num = dump_qp->attr.port_num;
 	qp->qp_access_flags = dump_qp->attr.qp_access_flags;
+
+	qp->path_mtu = dump_qp->attr.path_mtu;
+	qp->dest_qp_num = dump_qp->attr.dest_qp_num;
+	qp->rq_psn = dump_qp->attr.rq_psn;
+	qp->max_dest_rd_atomic = dump_qp->attr.max_dest_rd_atomic;
+	qp->min_rnr_timer = dump_qp->attr.path_mtu;
+
+	qp->ah_attr->dgid.len = sizeof(dump_qp->attr.ah_attr.grh.dgid);
+	memcpy(qp->ah_attr->dgid.data, dump_qp->attr.ah_attr.grh.dgid, qp->ah_attr->dgid.len);
+	qp->ah_attr->flow_label = dump_qp->attr.ah_attr.grh.flow_label;
+	qp->ah_attr->sgid_index = dump_qp->attr.ah_attr.grh.sgid_index;
+	qp->ah_attr->hop_limit = dump_qp->attr.ah_attr.grh.hop_limit;
+	qp->ah_attr->traffic_class = dump_qp->attr.ah_attr.grh.traffic_class;
+
+	qp->ah_attr->dlid = dump_qp->attr.ah_attr.dlid;
+	qp->ah_attr->sl = dump_qp->attr.ah_attr.sl;
+	qp->ah_attr->src_path_bits = dump_qp->attr.ah_attr.src_path_bits;
+	qp->ah_attr->static_rate = dump_qp->attr.ah_attr.static_rate;
+	qp->ah_attr->is_global = dump_qp->attr.ah_attr.is_global;
+	qp->ah_attr->port_num = dump_qp->attr.ah_attr.port_num;
 
 	qp->rq_start = dump_qp->rq_start;
 	qp->rq_size = dump_qp->rq_size;
@@ -612,6 +649,7 @@ static int ibverbs_restore_qp(struct ibverbs_list_entry * entry, struct task_res
 
 		/* Move to init state */
 		flags = IBV_QP_STATE | IBV_QP_PKEY_INDEX | IBV_QP_PORT;
+		memset(&attr, 0, sizeof(attr));
 
 		attr.qp_state = IB_QPS_INIT;
 		attr.pkey_index = qp->pkey_index;
@@ -637,6 +675,59 @@ static int ibverbs_restore_qp(struct ibverbs_list_entry * entry, struct task_res
 		}
 
 		/* Move to RTR state */
+		flags = IBV_QP_STATE;
+		memset(&attr, 0, sizeof(attr));
+
+		attr.qp_state = IB_QPS_RTR;
+		if (qp->qp_type == IB_QPT_RC) {
+			flags |= (IBV_QP_AV |
+				  IBV_QP_PATH_MTU |
+				  IBV_QP_DEST_QPN |
+				  IBV_QP_RQ_PSN |
+				  IBV_QP_MAX_DEST_RD_ATOMIC |
+				  IBV_QP_MIN_RNR_TIMER);
+
+			if (qp->ah_attr->dgid.len != sizeof(attr.ah_attr.grh.dgid)) {
+				pr_err("Unexpected dgid length: %lu expected %lu\n",
+				       qp->ah_attr->dgid.len,
+				       sizeof(attr.ah_attr.grh.dgid));
+			}
+			memcpy(attr.ah_attr.grh.dgid.raw, qp->ah_attr->dgid.data, qp->ah_attr->dgid.len);
+			attr.ah_attr.grh.flow_label = qp->ah_attr->flow_label;
+			attr.ah_attr.grh.sgid_index = qp->ah_attr->sgid_index;
+			attr.ah_attr.grh.hop_limit = qp->ah_attr->hop_limit;
+			attr.ah_attr.grh.traffic_class = qp->ah_attr->traffic_class;
+
+			attr.ah_attr.dlid = qp->ah_attr->dlid;
+			attr.ah_attr.sl = qp->ah_attr->sl;
+			attr.ah_attr.src_path_bits = qp->ah_attr->src_path_bits;
+			attr.ah_attr.static_rate = qp->ah_attr->static_rate;
+			attr.ah_attr.is_global = qp->ah_attr->is_global;
+			attr.ah_attr.port_num = qp->ah_attr->port_num;
+
+			attr.path_mtu = qp->path_mtu;
+			attr.dest_qp_num = qp->dest_qp_num;
+			attr.rq_psn = qp->rq_psn;
+			attr.max_dest_rd_atomic = qp->max_dest_rd_atomic;
+			attr.min_rnr_timer = qp->min_rnr_timer;
+		} else {
+			pr_err("Unsupported\n");
+			return -1;
+		}
+
+		int i = 0;
+		printf("MODIFY_QP %x %lu\n", flags, sizeof(attr));
+		while (i < sizeof(attr)) {
+			printf("%08x\n", *(uint32_t*)((void *)&attr + i));
+			i += sizeof(uint32_t);
+		}
+
+		ret = ibv_modify_qp(args.qp, &attr, flags);
+		if (ret) {
+			pr_err("Modify to init failed: %s\n", strerror(errno));
+			return -1;
+		}
+
 		if (qp->qp_state == IB_QPS_RTR) {
 			break;
 		}
