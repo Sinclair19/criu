@@ -237,11 +237,11 @@ static int dump_one_ibverbs_qp(IbverbsObject **pb_obj, struct ib_uverbs_dump_obj
 	qp->sq_start = dump_qp->sq_start;
 	qp->sq_size = dump_qp->sq_size;
 
-	qp->max_send_wr = dump_qp->max_send_wr;
-	qp->max_recv_wr = dump_qp->max_recv_wr;
-	qp->max_send_sge = dump_qp->max_send_sge;
-	qp->max_recv_sge = dump_qp->max_recv_sge;
-	qp->max_inline_data = dump_qp->max_inline_data;
+	qp->max_send_wr = dump_qp->attr.cap.max_send_wr;
+	qp->max_recv_wr = dump_qp->attr.cap.max_recv_wr;
+	qp->max_send_sge = dump_qp->attr.cap.max_send_sge;
+	qp->max_recv_sge = dump_qp->attr.cap.max_recv_sge;
+	qp->max_inline_data = dump_qp->attr.cap.max_inline_data;
 
 	(*pb_obj)->type = IBVERBS_OBJECT_TYPE__QP;
 	(*pb_obj)->handle = dump_qp->obj.handle;
@@ -539,7 +539,7 @@ static int ibverbs_restore_qp(struct ibverbs_list_entry * entry, struct task_res
 	args.attr.qp_context = NULL;
 	args.attr.srq = NULL;
 	args.attr.qp_type = qp->qp_type;
-	args.attr.sq_sig_all = qp->sq_sig_all;;
+	args.attr.sq_sig_all = qp->sq_sig_all;
 
 	args.attr.cap.max_send_wr = qp->max_send_wr;
 	args.attr.cap.max_recv_wr = qp->max_recv_wr;
