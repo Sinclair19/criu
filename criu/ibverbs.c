@@ -103,6 +103,11 @@ static int dump_one_ibverbs_pd(IbverbsObject **pb_obj, struct ib_uverbs_dump_obj
 
 	pr_err("Found object PD: %d\n", dump_pd->obj.handle);
 
+	if (dump_obj->size != sizeof(*dump_pd)) {
+		pr_err("Unmatched object size: %d expected %ld\n", dump_obj->size, sizeof(*dump_pd));
+		return -1;
+	}
+
 	*pb_obj = xmalloc(sizeof(**pb_obj));
 	if (!*pb_obj) {
 		return -1;
@@ -130,6 +135,11 @@ static int dump_one_ibverbs_mr(IbverbsObject **pb_obj, struct ib_uverbs_dump_obj
 
 	dump_mr = container_of(dump_obj, struct ib_uverbs_dump_object_mr, obj);
 	pr_err("Found object MR: %d @0x%llx + 0x%llx\n", dump_mr->obj.handle, dump_mr->address, dump_mr->length);
+
+	if (dump_obj->size != sizeof(*dump_mr)) {
+		pr_err("Unmatched object size: %d expected %ld\n", dump_obj->size, sizeof(*dump_mr));
+		return -1;
+	}
 
 	*pb_obj = xmalloc(sizeof(**pb_obj));
 	if (!*pb_obj) {
@@ -178,6 +188,11 @@ static int dump_one_ibverbs_cq(IbverbsObject **pb_obj, struct ib_uverbs_dump_obj
 
 	pr_err("Found object CQ: %d\n", dump_cq->obj.handle);
 
+	if (dump_obj->size != sizeof(*dump_cq)) {
+		pr_err("Unmatched object size: %d expected %ld\n", dump_obj->size, sizeof(*dump_cq));
+		return -1;
+	}
+
 	*pb_obj = xmalloc(sizeof(**pb_obj));
 	if (!*pb_obj) {
 		return -1;
@@ -211,6 +226,11 @@ static int dump_one_ibverbs_qp(IbverbsObject **pb_obj, struct ib_uverbs_dump_obj
 	dump_qp = container_of(dump_obj, struct ib_uverbs_dump_object_qp, obj);
 
 	pr_err("Found object QP: %d\n", dump_qp->obj.handle);
+
+	if (dump_obj->size != sizeof(*dump_qp)) {
+		pr_err("Unmatched object size: %d expected %ld\n", dump_obj->size, sizeof(*dump_qp));
+		return -1;
+	}
 
 	*pb_obj = xmalloc(sizeof(**pb_obj));
 	if (!*pb_obj) {
