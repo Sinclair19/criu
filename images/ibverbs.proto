@@ -63,6 +63,10 @@ message ibverbs_qp {
 	required uint32 max_send_sge	= 13;
 	required uint32 max_recv_sge	= 14;
 	required uint32 max_inline_data	= 15;
+	required uint32 qp_state	= 16;
+	required uint32 pkey_index	= 17;
+	required uint32 port_num	= 18;
+	required uint32 qp_access_flags	= 19;
 };
 
 message ibverbs_object {

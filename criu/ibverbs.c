@@ -248,6 +248,10 @@ static int dump_one_ibverbs_qp(IbverbsObject **pb_obj, struct ib_uverbs_dump_obj
 	qp->qp_type = dump_qp->qp_type;
 	qp->srq_handle = dump_qp->srq_handle;
 	qp->sq_sig_all = dump_qp->sq_sig_all;
+	qp->qp_state = dump_qp->attr.qp_state;
+	qp->pkey_index = dump_qp->attr.pkey_index;
+	qp->port_num = dump_qp->attr.port_num;
+	qp->qp_access_flags = dump_qp->attr.qp_access_flags;
 
 	qp->rq_start = dump_qp->rq_start;
 	qp->rq_size = dump_qp->rq_size;
@@ -266,6 +270,8 @@ static int dump_one_ibverbs_qp(IbverbsObject **pb_obj, struct ib_uverbs_dump_obj
 	(*pb_obj)->type = IBVERBS_OBJECT_TYPE__QP;
 	(*pb_obj)->handle = dump_qp->obj.handle;
 	(*pb_obj)->qp = qp;
+
+	pr_err("Dumped QP type %d\n", qp->qp_type);
 
 	return sizeof(*dump_qp);
 }
@@ -592,6 +598,52 @@ static int ibverbs_restore_qp(struct ibverbs_list_entry * entry, struct task_res
 			pr_err("Adding range %lx+ %lx failed\n",
 			       (u64) args.sq.vm_start, args.sq.vm_size);
 			return -1;
+		}
+	}
+
+	while (1) {
+		int flags;
+		struct ibv_qp_attr attr;
+
+		if (qp->qp_state == IB_QPS_RESET) {
+			/* Do nothing */
+			break;
+		}
+
+		/* Move to init state */
+		flags = IBV_QP_STATE | IBV_QP_PKEY_INDEX | IBV_QP_PORT;
+
+		attr.qp_state = IB_QPS_INIT;
+		attr.pkey_index = qp->pkey_index;
+		attr.port_num = qp->port_num;
+
+
+		if (qp->qp_type == IB_QPT_RC) {
+			flags |= IBV_QP_ACCESS_FLAGS;
+			attr.qp_access_flags = qp->qp_access_flags;
+		} else {
+			pr_err("Unsupported\n");
+			return -1;
+		}
+
+		ret = ibv_modify_qp(args.qp, &attr, flags);
+		if (ret) {
+			pr_err("Modify to init failed: %s\n", strerror(errno));
+			return -1;
+		}
+
+		if (qp->qp_state == IB_QPS_INIT) {
+			break;
+		}
+
+		/* Move to RTR state */
+		if (qp->qp_state == IB_QPS_RTR) {
+			break;
+		}
+
+		/* Move to RTS state */
+		if (qp->qp_state == IB_QPS_RTS) {
+			break;
 		}
 	}
 
