@@ -90,6 +90,11 @@ message ibverbs_qp {
 	required uint32 rq_psn			= 22;
 	required uint32 max_dest_rd_atomic	= 23;
 	required uint32 min_rnr_timer		= 24;
+	required uint32 sq_psn			= 26;
+	required uint32 max_rd_atomic		= 27;
+	required uint32 retry_cnt		= 28;
+	required uint32 rnr_retry		= 29;
+	required uint32 timeout			= 30;
 
 	required ibverbs_ah_attr ah_attr	= 25;
 };

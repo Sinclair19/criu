@@ -290,6 +290,12 @@ static int dump_one_ibverbs_qp(IbverbsObject **pb_obj, struct ib_uverbs_dump_obj
 	qp->ah_attr->is_global = dump_qp->attr.ah_attr.is_global;
 	qp->ah_attr->port_num = dump_qp->attr.ah_attr.port_num;
 
+	qp->sq_psn = dump_qp->attr.sq_psn;
+	qp->max_rd_atomic = dump_qp->attr.max_rd_atomic;
+	qp->retry_cnt = dump_qp->attr.retry_cnt;
+	qp->rnr_retry = dump_qp->attr.rnr_retry;
+	qp->timeout = dump_qp->attr.timeout;
+
 	qp->rq_start = dump_qp->rq_start;
 	qp->rq_size = dump_qp->rq_size;
 	qp->rcq_handle = dump_qp->rcq_handle;
@@ -733,9 +739,38 @@ static int ibverbs_restore_qp(struct ibverbs_list_entry * entry, struct task_res
 		}
 
 		/* Move to RTS state */
+		flags = IBV_QP_STATE;
+		memset(&attr, 0, sizeof(attr));
+
+		attr.qp_state = IB_QPS_RTS;
+		if (qp->qp_type == IB_QPT_RC) {
+			flags |= (IBV_QP_SQ_PSN |
+				  IBV_QP_MAX_QP_RD_ATOMIC |
+				  IBV_QP_RETRY_CNT |
+				  IBV_QP_RNR_RETRY |
+				  IBV_QP_TIMEOUT);
+			attr.sq_psn = qp->sq_psn;
+			attr.max_rd_atomic = qp->max_rd_atomic;
+			attr.retry_cnt = qp->retry_cnt;
+			attr.rnr_retry = qp->rnr_retry;
+			attr.timeout = qp->timeout;
+		} else {
+			pr_err("Unsupported\n");
+			return -1;
+		}
+
+		ret = ibv_modify_qp(args.qp, &attr, flags);
+		if (ret) {
+			pr_err("Modify to init failed: %s\n", strerror(errno));
+			return -1;
+		}
+
 		if (qp->qp_state == IB_QPS_RTS) {
 			break;
 		}
+
+		pr_err("Unknown state %d reached\n", qp->qp_state);
+		return -1;
 	}
 
 	pr_err("Restored QP object %d\n", obj->handle);
