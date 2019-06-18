@@ -295,6 +295,7 @@ static int dump_one_ibverbs_qp(IbverbsObject **pb_obj, struct ib_uverbs_dump_obj
 	qp->retry_cnt = dump_qp->attr.retry_cnt;
 	qp->rnr_retry = dump_qp->attr.rnr_retry;
 	qp->timeout = dump_qp->attr.timeout;
+	qp->qp_num = dump_qp->qp_num;
 
 	qp->rq_start = dump_qp->rq_start;
 	qp->rq_size = dump_qp->rq_size;
@@ -628,6 +629,11 @@ static int ibverbs_restore_qp(struct ibverbs_list_entry * entry, struct task_res
 		return -1;
 	}
 
+	if (args.qp->qp_num != qp->qp_num) {
+		pr_err("Nonmatching QP number: %u expected %u\n", args.qp->qp_num, qp->qp_num);
+		return -1;
+	}
+
 	if (args.rq.vm_size > 0) {
 		if (keep_address_range((u64) args.rq.vm_start, args.rq.vm_size)) {
 			pr_err("Adding range %lx+ %lx failed\n",
@@ -719,13 +725,6 @@ static int ibverbs_restore_qp(struct ibverbs_list_entry * entry, struct task_res
 		} else {
 			pr_err("Unsupported\n");
 			return -1;
-		}
-
-		int i = 0;
-		printf("MODIFY_QP %x %lu\n", flags, sizeof(attr));
-		while (i < sizeof(attr)) {
-			printf("%08x\n", *(uint32_t*)((void *)&attr + i));
-			i += sizeof(uint32_t);
 		}
 
 		ret = ibv_modify_qp(args.qp, &attr, flags);

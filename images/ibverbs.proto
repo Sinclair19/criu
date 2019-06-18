@@ -95,6 +95,7 @@ message ibverbs_qp {
 	required uint32 retry_cnt		= 28;
 	required uint32 rnr_retry		= 29;
 	required uint32 timeout			= 30;
+	required uint32 qp_num			= 31;
 
 	required ibverbs_ah_attr ah_attr	= 25;
 };
