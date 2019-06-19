@@ -1192,16 +1192,9 @@ void __export_unmap(void)
 static int unmap_old_vmas(struct rst_address_range *kept_ranges, unsigned long n,
 		      unsigned long task_size)
 {
-	int ret;
-
-	for (unsigned i = 0; i < n; i++) {
-		u64 start = kept_ranges[i].start;
-		u64 end = kept_ranges[i].start + kept_ranges[i].size;
-		pr_err("Keep range (%lx-%lx)\n", start, end);
-	}
-
 	u64 start = 0;
 	u64 end;
+	int ret;
 
 	/* Unmap all memeroy except the specified ranges. */
 	for (unsigned i = 0; i < n; i++) {
@@ -1219,7 +1212,6 @@ static int unmap_old_vmas(struct rst_address_range *kept_ranges, unsigned long n
 	if (ret) {
 		pr_err("Unable to unmap (0x%lx-0x%lx): %d\n", start, task_size, ret);
 	}
-	pr_err("WAH\n");
 
 	return 0;
 }
