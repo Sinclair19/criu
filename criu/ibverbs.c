@@ -548,7 +548,7 @@ static int ibverbs_restore_cq(struct ibverbs_list_entry *entry, struct task_rest
 		return -1;
 	}
 
-	struct ibv_restore_object_cq args;
+	struct ibv_restore_cq args;
 
 	args.cqe = cq->cqe;
 	args.queue.vm_start = cq->vm_start;
@@ -556,7 +556,7 @@ static int ibverbs_restore_cq(struct ibverbs_list_entry *entry, struct task_rest
 	args.comp_vector = cq->comp_vector;
 	args.channel = NULL;
 
-	int ret = ibv_restore_object(entry->ibcontext, IB_UVERBS_OBJECT_CQ, &args);
+	int ret = ibv_restore_object(entry->ibcontext, IB_UVERBS_OBJECT_CQ, 0, &args, sizeof(args));
 	if (ret < 0) {
 		pr_err("Failed to create CQ\n");
 		return -1;
@@ -581,7 +581,7 @@ static int ibverbs_restore_qp(struct ibverbs_list_entry * entry, struct task_res
 	IbverbsObject *obj = entry->obj;
 	IbverbsQp *qp = obj->qp;
 
-	struct ibv_restore_object_qp args;
+	struct ibv_restore_qp args;
 
 	args.pd = ibverbs_get_object(IB_UVERBS_OBJECT_PD, qp->pd_handle);
 	if (!args.pd) {
@@ -623,7 +623,8 @@ static int ibverbs_restore_qp(struct ibverbs_list_entry * entry, struct task_res
 	args.sq.vm_start = qp->sq_start;
 	args.sq.vm_size = qp->sq_size;
 
-	int ret = ibv_restore_object(entry->ibcontext, IB_UVERBS_OBJECT_QP, &args);
+	int ret = ibv_restore_object(entry->ibcontext, IB_UVERBS_OBJECT_QP,
+				     IBV_RESTORE_QP_CREATE, &args, sizeof(args));
 	if (ret < 0) {
 		pr_err("Failed to restore QP\n");
 		return -1;
