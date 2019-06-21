@@ -39,12 +39,26 @@ message ibverbs_mr {
 	required uint32	rkey		= 7;
 };
 
+message rxe_queue {
+	required uint32 log2_elem_size	= 1;
+	required uint32 index_mask	= 2;
+	required uint32 producer_index	= 3;
+	required uint32 consumer_index	= 4;
+};
+
+message rxe_qp {
+	required rxe_queue sq	= 1;
+  	required rxe_queue rq	= 2;
+};
+
 message ibverbs_cq {
 	required uint32 cqe		= 1;
 	required uint32 comp_channel	= 2;
 	required uint32 comp_vector	= 3;
 	required uint64 vm_start	= 4;
 	required uint64 vm_size		= 5;
+
+	required rxe_queue rxe		= 6;
 };
 
 message ibv_global_route {
@@ -98,6 +112,7 @@ message ibverbs_qp {
 	required uint32 qp_num			= 31;
 
 	required ibverbs_ah_attr ah_attr	= 25;
+	required rxe_qp rxe			= 32;
 };
 
 message ibverbs_object {

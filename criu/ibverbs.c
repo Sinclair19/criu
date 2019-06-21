@@ -94,6 +94,48 @@ static void pr_info_ibverbs(char *action, IbverbsEntry *ibv)
 	pr_info("IB verbs %s: id %#08x flags %#04x\n", action, ibv->id, ibv->flags);
 }
 
+static RxeQp *pballoc_rxe_qp()
+{
+	RxeQueue *sq = NULL, *rq = NULL;
+	RxeQp *qp = NULL;
+
+	sq = xmalloc(sizeof(*sq));
+	rq = xmalloc(sizeof(*rq));
+	qp = xmalloc(sizeof(*qp));
+
+	if (!sq || !rq || !qp) {
+		xfree(qp);
+		xfree(sq);
+		xfree(rq);
+		return NULL;
+	}
+
+	rxe_queue__init(sq);
+	rxe_queue__init(rq);
+	rxe_qp__init(qp);
+
+	qp->sq = sq;
+	qp->rq = rq;
+
+	return qp;
+}
+
+static void save_rxe_queue(RxeQueue *rq, struct rxe_dump_queue *dump_queue)
+{
+	rq->log2_elem_size = dump_queue->log2_elem_size;
+	rq->index_mask = dump_queue->index_mask;
+	rq->producer_index = dump_queue->producer_index;
+	rq->consumer_index = dump_queue->consumer_index;
+}
+
+static void restore_rxe_queue(struct rxe_dump_queue *dump_queue, RxeQueue *rq)
+{
+	dump_queue->log2_elem_size = rq->log2_elem_size;
+	dump_queue->index_mask = rq->index_mask;
+	dump_queue->producer_index = rq->producer_index;
+	dump_queue->consumer_index = rq->consumer_index;
+}
+
 static int dump_one_ibverbs_pd(IbverbsObject **pb_obj, struct ib_uverbs_dump_object *dump_obj)
 {
 	struct ib_uverbs_dump_object_pd *dump_pd;
@@ -205,11 +247,21 @@ static int dump_one_ibverbs_cq(IbverbsObject **pb_obj, struct ib_uverbs_dump_obj
 	}
 	ibverbs_cq__init(cq);
 
+	cq->rxe = xmalloc(sizeof(*cq->rxe));
+	if (!cq->rxe) {
+		xfree(*pb_obj);
+		xfree(cq);
+		return -1;
+	}
+	rxe_queue__init(cq->rxe);
+
 	cq->cqe = dump_cq->cqe;
 	cq->comp_channel = dump_cq->comp_channel;
 	cq->vm_start = dump_cq->vm_start;
 	cq->vm_size = dump_cq->vm_size;
 	cq->comp_vector = dump_cq->comp_vector;
+
+	save_rxe_queue(cq->rxe, &dump_cq->rxe);
 
 	(*pb_obj)->type = IBVERBS_OBJECT_TYPE__CQ;
 	(*pb_obj)->handle = dump_cq->obj.handle;
@@ -254,10 +306,12 @@ static int dump_one_ibverbs_qp(IbverbsObject **pb_obj, struct ib_uverbs_dump_obj
 
 	qp->ah_attr->dgid.data = xmalloc(sizeof(dump_qp->attr.ah_attr.grh.dgid));
 	if (!qp->ah_attr->dgid.data) {
-		xfree(qp->ah_attr);
-		xfree(qp);
-		xfree(*pb_obj);
-		return -1;
+		goto out_err;
+	}
+
+	qp->rxe = pballoc_rxe_qp();
+	if (!qp->rxe) {
+		goto out_err;
 	}
 
 	qp->pd_handle = dump_qp->pd_handle;
@@ -311,6 +365,9 @@ static int dump_one_ibverbs_qp(IbverbsObject **pb_obj, struct ib_uverbs_dump_obj
 	qp->max_recv_sge = dump_qp->attr.cap.max_recv_sge;
 	qp->max_inline_data = dump_qp->attr.cap.max_inline_data;
 
+	save_rxe_queue(qp->rxe->sq, &dump_qp->rxe.sq);
+	save_rxe_queue(qp->rxe->rq, &dump_qp->rxe.rq);
+
 	(*pb_obj)->type = IBVERBS_OBJECT_TYPE__QP;
 	(*pb_obj)->handle = dump_qp->obj.handle;
 	(*pb_obj)->qp = qp;
@@ -318,6 +375,14 @@ static int dump_one_ibverbs_qp(IbverbsObject **pb_obj, struct ib_uverbs_dump_obj
 	pr_err("Dumped QP type %d\n", qp->qp_type);
 
 	return sizeof(*dump_qp);
+
+ out_err:
+	xfree(qp->ah_attr->dgid.data);
+	xfree(qp->ah_attr);
+	xfree(qp);
+	xfree(*pb_obj);
+
+	return -1;
 }
 
 static int dump_one_ibverbs(int lfd, u32 id, const struct fd_parms *p)
@@ -542,6 +607,7 @@ static int ibverbs_restore_cq(struct ibverbs_list_entry *entry, struct task_rest
 {
 	IbverbsObject *obj = entry->obj;
 	IbverbsCq *cq = obj->cq;
+	struct ibv_cq *ibv_cq;
 
 	if (cq->comp_channel != -1) {
 		pr_err("BBBSHSTHSHT\n");
@@ -556,7 +622,9 @@ static int ibverbs_restore_cq(struct ibverbs_list_entry *entry, struct task_rest
 	args.comp_vector = cq->comp_vector;
 	args.channel = NULL;
 
-	int ret = ibv_restore_object(entry->ibcontext, IB_UVERBS_OBJECT_CQ, 0, &args, sizeof(args));
+	int ret = ibv_restore_object(entry->ibcontext, (void **)&ibv_cq,
+				     IB_UVERBS_OBJECT_CQ, IBV_RESTORE_CQ_CREATE,
+				     &args, sizeof(args));
 	if (ret < 0) {
 		pr_err("Failed to create CQ\n");
 		return -1;
@@ -567,8 +635,19 @@ static int ibverbs_restore_cq(struct ibverbs_list_entry *entry, struct task_rest
 			return -1;
 	}
 
-	if (ibverbs_remember_object(IB_UVERBS_OBJECT_CQ, args.cq->handle, args.cq)) {
-		pr_err("Failed to remember CQ object with id %d\n", args.cq->handle);
+	if (ibverbs_remember_object(IB_UVERBS_OBJECT_CQ, ibv_cq->handle, ibv_cq)) {
+		pr_err("Failed to remember CQ object with id %d\n", ibv_cq->handle);
+		return -1;
+	}
+
+	struct rxe_dump_queue dump_queue;
+	restore_rxe_queue(&dump_queue, cq->rxe);
+
+	ret = ibv_restore_object(entry->ibcontext,
+				 (void **)&ibv_cq, IB_UVERBS_OBJECT_CQ,
+				 IBV_RESTORE_CQ_REFILL, &dump_queue, sizeof(dump_queue));
+	if (ret) {
+		pr_err("Failed to restore CQ\n");
 		return -1;
 	}
 
@@ -580,6 +659,7 @@ static int ibverbs_restore_qp(struct ibverbs_list_entry * entry, struct task_res
 {
 	IbverbsObject *obj = entry->obj;
 	IbverbsQp *qp = obj->qp;
+	struct ibv_qp *ibv_qp;
 
 	struct ibv_restore_qp args;
 
@@ -623,15 +703,16 @@ static int ibverbs_restore_qp(struct ibverbs_list_entry * entry, struct task_res
 	args.sq.vm_start = qp->sq_start;
 	args.sq.vm_size = qp->sq_size;
 
-	int ret = ibv_restore_object(entry->ibcontext, IB_UVERBS_OBJECT_QP,
+	int ret = ibv_restore_object(entry->ibcontext,
+				     (void **)&ibv_qp, IB_UVERBS_OBJECT_QP,
 				     IBV_RESTORE_QP_CREATE, &args, sizeof(args));
 	if (ret < 0) {
 		pr_err("Failed to restore QP\n");
 		return -1;
 	}
 
-	if (args.qp->qp_num != qp->qp_num) {
-		pr_err("Nonmatching QP number: %u expected %u\n", args.qp->qp_num, qp->qp_num);
+	if (ibv_qp->qp_num != qp->qp_num) {
+		pr_err("Nonmatching QP number: %u expected %u\n", ibv_qp->qp_num, qp->qp_num);
 		return -1;
 	}
 
@@ -677,7 +758,7 @@ static int ibverbs_restore_qp(struct ibverbs_list_entry * entry, struct task_res
 			return -1;
 		}
 
-		ret = ibv_modify_qp(args.qp, &attr, flags);
+		ret = ibv_modify_qp(ibv_qp, &attr, flags);
 		if (ret) {
 			pr_err("Modify to init failed: %s\n", strerror(errno));
 			return -1;
@@ -728,7 +809,7 @@ static int ibverbs_restore_qp(struct ibverbs_list_entry * entry, struct task_res
 			return -1;
 		}
 
-		ret = ibv_modify_qp(args.qp, &attr, flags);
+		ret = ibv_modify_qp(ibv_qp, &attr, flags);
 		if (ret) {
 			pr_err("Modify to init failed: %s\n", strerror(errno));
 			return -1;
@@ -759,7 +840,7 @@ static int ibverbs_restore_qp(struct ibverbs_list_entry * entry, struct task_res
 			return -1;
 		}
 
-		ret = ibv_modify_qp(args.qp, &attr, flags);
+		ret = ibv_modify_qp(ibv_qp, &attr, flags);
 		if (ret) {
 			pr_err("Modify to init failed: %s\n", strerror(errno));
 			return -1;
@@ -770,6 +851,18 @@ static int ibverbs_restore_qp(struct ibverbs_list_entry * entry, struct task_res
 		}
 
 		pr_err("Unknown state %d reached\n", qp->qp_state);
+		return -1;
+	}
+
+	struct rxe_dump_qp dump_qp;
+	restore_rxe_queue(&dump_qp.rq, qp->rxe->rq);
+	restore_rxe_queue(&dump_qp.sq, qp->rxe->sq);
+
+	ret = ibv_restore_object(entry->ibcontext,
+				 (void **)&ibv_qp, IB_UVERBS_OBJECT_QP,
+				 IBV_RESTORE_QP_REFILL, &dump_qp, sizeof(dump_qp));
+	if (ret) {
+		pr_err("Failed to restore QP\n");
 		return -1;
 	}
 
