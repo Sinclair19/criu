@@ -110,7 +110,8 @@ static inline bool vma_entry_is_private(VmaEntry *entry,
 		(vma_entry_is(entry, VMA_ANON_PRIVATE)	||
 		 vma_entry_is(entry, VMA_FILE_PRIVATE)) &&
 		 (entry->end <= task_size)) ||
-		vma_entry_is(entry, VMA_AREA_AIORING);
+		vma_entry_is(entry, VMA_AREA_AIORING) ||
+		vma_entry_is(entry, VMA_AREA_IBVERBS_DEV);
 }
 
 static inline bool vma_area_is_private(struct vma_area *vma,
@@ -131,7 +132,8 @@ static inline bool vma_entry_can_be_lazy(VmaEntry *e)
 		!(e->flags & MAP_LOCKED) &&
 		!(vma_entry_is(e, VMA_AREA_VDSO)) &&
 		!(vma_entry_is(e, VMA_AREA_VSYSCALL)) &&
-		!(vma_entry_is(e, VMA_AREA_IBVERBS)));
+		!(vma_entry_is(e, VMA_AREA_IBVERBS)) &&
+		!(vma_entry_is(e, VMA_AREA_IBVERBS_DEV)));
 }
 
 #endif /* __CR_VMA_H__ */

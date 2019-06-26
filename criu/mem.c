@@ -225,6 +225,8 @@ bool should_dump_page(VmaEntry *vmae, u64 pme)
 		return false;
 	if (vma_entry_is(vmae, VMA_AREA_AIORING))
 		return true;
+	if (vma_entry_is(vmae, VMA_AREA_IBVERBS_DEV))
+		return true;
 	if ((pme & (PME_PRESENT | PME_SWAP)) && !__page_is_zero(pme))
 		return true;
 
