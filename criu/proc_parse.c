@@ -575,8 +575,7 @@ static int handle_vma(pid_t pid, struct vma_area *vma_area,
 			 is_ibverbs(st_buf->st_rdev, st_buf->st_dev)) {
 			/* ibverbs CQ mapping -- supported */
 			vma_area->e->status |= VMA_AREA_IBVERBS_DEV;
-		}
-		else {
+		} else {
 			pr_err("Can't handle non-regular mapping on %d's map %"PRIx64"\n", pid, vma_area->e->start);
 			goto err;
 		}
