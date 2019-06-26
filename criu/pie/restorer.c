@@ -1199,10 +1199,12 @@ static int unmap_old_vmas(struct rst_address_range *kept_ranges, unsigned long n
 	/* Unmap all memeroy except the specified ranges. */
 	for (unsigned i = 0; i < n; i++) {
 		end = kept_ranges[i].start;
-		pr_err("Unmap range (%lx-%lx)\n", start, end);
-		ret = sys_munmap((void *)start, end - start);
-		if (ret) {
-			pr_err("Unable to unmap (0x%lx-0x%lx): %d\n", start, end, ret);
+		if (start != end) {
+			pr_err("Unmap range (%lx-%lx)\n", start, end);
+			ret = sys_munmap((void *)start, end - start);
+			if (ret) {
+				pr_err("Unable to unmap (0x%lx-0x%lx): %d\n", start, end, ret);
+			}
 		}
 		start = kept_ranges[i].start + kept_ranges[i].size;
 	}
