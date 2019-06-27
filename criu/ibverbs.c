@@ -8,7 +8,6 @@
 #include "ibverbs.h"
 #include "mem.h"
 #include "restorer.h"
-#include "rst-malloc.h"
 
 #include "protobuf.h"
 #include "images/ibverbs.pb-c.h"
@@ -1007,9 +1006,6 @@ int collect_ibverbs_area(struct vma_area *vma)
 int prepare_ibverbs(struct pstree_item *me, struct task_restore_args *ta)
 {
 	struct ibverbs_list_entry *le;
-
-	ta->ibverbs = (struct rst_ibverbs_object *)rst_mem_align_cpos(RM_PRIVATE);
-	ta->ibverbs_n = 0;
 
 	int i = 0;
 	list_for_each_entry(le, &ibverbs_restore_objects, restore_list) {

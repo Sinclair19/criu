@@ -168,9 +168,6 @@ struct task_restore_args {
 	struct rst_aio_ring		*rings;
 	unsigned int			rings_n;
 
-	struct rst_ibverbs_object	*ibverbs;
-	unsigned int			ibverbs_n;
-
 	struct rlimit64			*rlims;
 	unsigned int			rlims_n;
 
