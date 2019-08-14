@@ -39,7 +39,6 @@
 #include "common/lock.h"
 #include "common/page.h"
 #include "restorer.h"
-#include "restore-ibverbs.h"
 #include "aio.h"
 #include "ibverbs.h"
 #include "seccomp.h"
