@@ -880,7 +880,8 @@ static int ibverbs_open(struct file_desc *d, int *new_fd)
 
 	info = container_of(d, struct ibverbs_file_info, d);
 
-	pr_info("Opening device %s", ib_devname);
+	pr_info("Opening device %s\n", ib_devname);
+
 	ibdev = find_ibdev(ib_devname);
 	if (!ibdev) {
 		pr_perror("IB device %s not found\n", ib_devname);
