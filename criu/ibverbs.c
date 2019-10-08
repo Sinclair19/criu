@@ -25,18 +25,29 @@ struct ibverbs_list_entry {
 	int 			(*restore)(struct ibverbs_list_entry *entry, struct task_restore_args *ta);
 };
 
+static int num_dev;
+static struct ibv_device **dev_list = NULL;
+
+int init_ibverbs()
+{
+	dev_list = ibv_get_device_list(&num_dev);
+
+	if (num_dev <= 0) {
+		pr_err(" Did not detect devices. If device exists, check if driver is up.\n");
+		return -1;
+	}
+
+	return 0;
+}
+
 static struct ibv_device* find_ibdev(const char *ib_devname)
 {
-	int num_of_device;
-	struct ibv_device **dev_list;
-	struct ibv_device *ib_dev = NULL;
-
-	dev_list = ibv_get_device_list(&num_of_device);
-
-	if (num_of_device <= 0) {
-		pr_err(" Did not detect devices. If device exists, check if driver is up.\n");
-		return NULL;
+	if (!dev_list) {
+		if (init_ibverbs())
+			return NULL;
 	}
+
+	struct ibv_device *ib_dev = NULL;
 
 	if (!ib_devname) {
 		ib_dev = dev_list[0];
