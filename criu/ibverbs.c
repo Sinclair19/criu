@@ -570,48 +570,42 @@ static int ibverbs_restore_mr(struct ibverbs_list_entry *entry, struct task_rest
 	IbverbsObject *obj = entry->obj;
 	IbverbsMr *pb_mr = obj->mr;
 
-	/* XXX: dirty hack to ensure the same lkey */
-	int i = 300;
-	while (1) {
-		struct ibv_mr *mr;
-		struct ibv_pd *pd;
+	struct ibv_mr *ibv_mr;
+	struct ibv_pd *pd;
 
-		pd = ibverbs_get_object(IB_UVERBS_OBJECT_PD, pb_mr->pd_handle);
-		if (!pd) {
-			pr_err("PD object with id %d is not known\n", pb_mr->pd_handle);
-			return -1;
-		}
-
-		mr = ibv_reg_mr(pd, (void *)pb_mr->address, pb_mr->length, pb_mr->access);
-		if (!mr) {
-			pr_err("ibv_reg_mr failed: %s\n", strerror(errno));
-			return -1;
-		}
-
-		if (pb_mr->lkey != mr->lkey || pb_mr->rkey != mr->rkey) {
-			pr_err("Unexpected lkey %d (expect %d) or rkey %d (expect %d)\n",
-			       mr->lkey, pb_mr->lkey, mr->rkey, pb_mr->rkey);
-			if (i-- == 0) {
-				pr_err("Too many trials\n");
-				return -1;
-			}
-
-			int ret = ibv_dereg_mr(mr);
-			if (ret) {
-				pr_err("Dereg failed\n");
-				return -1;
-			}
-			continue;
-		}
-
-		if (ibverbs_remember_object(IB_UVERBS_OBJECT_MR, mr->handle, mr)) {
-			pr_err("Failed to remember object\n");
-			return -1;
-		}
-
-		pr_err("Restored MR object %d\n", obj->handle);
-		return 0;
+	pd = ibverbs_get_object(IB_UVERBS_OBJECT_PD, pb_mr->pd_handle);
+	if (!pd) {
+		pr_err("PD object with id %d is not known\n", pb_mr->pd_handle);
+		return -1;
 	}
+
+	ibv_mr = ibv_reg_mr(pd, (void *)pb_mr->address, pb_mr->length,
+			    pb_mr->access);
+	if (!ibv_mr) {
+		pr_err("ibv_reg_mr failed: %s\n", strerror(errno));
+		return -1;
+	}
+
+	struct rxe_dump_mr args;
+
+	args.lkey = pb_mr->lkey;
+	args.rkey = pb_mr->rkey;
+
+	int ret = ibv_restore_object(entry->ibcontext, (void **)&ibv_mr,
+				     IB_UVERBS_OBJECT_MR, IBV_RESTORE_MR_KEYS,
+				     &args, sizeof(args));
+	if (ret < 0) {
+		pr_err("Failed to restore MR: %s\n", strerror(errno));
+		return -1;
+	}
+
+	if (ibverbs_remember_object(IB_UVERBS_OBJECT_MR, ibv_mr->handle, ibv_mr)) {
+		pr_err("Failed to remember object\n");
+		return -1;
+	}
+
+	pr_err("Restored MR object %d\n", obj->handle);
+	return 0;
 }
 
 static int ibverbs_restore_cq(struct ibverbs_list_entry *entry, struct task_restore_args *ta)
