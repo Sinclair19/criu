@@ -591,10 +591,12 @@ static int ibverbs_restore_mr(struct ibverbs_list_entry *entry, struct task_rest
 	args.lkey = pb_mr->lkey;
 	args.rkey = pb_mr->rkey;
 
+	pr_err("CRIU restore keys: %d==%d %d==%d\n", args.lkey, pb_mr->lkey, args.rkey, pb_mr->rkey);
+
 	int ret = ibv_restore_object(entry->ibcontext, (void **)&ibv_mr,
 				     IB_UVERBS_OBJECT_MR, IBV_RESTORE_MR_KEYS,
 				     &args, sizeof(args));
-	if (ret < 0) {
+	if (ret) {
 		pr_err("Failed to restore MR: %s\n", strerror(errno));
 		return -1;
 	}
@@ -630,7 +632,7 @@ static int ibverbs_restore_cq(struct ibverbs_list_entry *entry, struct task_rest
 	int ret = ibv_restore_object(entry->ibcontext, (void **)&ibv_cq,
 				     IB_UVERBS_OBJECT_CQ, IBV_RESTORE_CQ_CREATE,
 				     &args, sizeof(args));
-	if (ret < 0) {
+	if (ret) {
 		pr_err("Failed to create CQ\n");
 		return -1;
 	}
@@ -665,21 +667,21 @@ static int rxe_set_last_qpn(uint32_t qpn)
 	int ret;
 	int fd;
 	uint32_t last_qpn = qpn - 1;
-        const char *last_qpn_path = "/proc/sys/net/rdma_rxe/last_qpn";
-        char buf[32];
+	const char *last_qpn_path = "/proc/sys/net/rdma_rxe/last_qpn";
+	char buf[32];
 
-        /* XXX: Should actually do this in kernel in rxe_pool.c: alloc_index */
+	/* XXX: Should actually do this in kernel in rxe_pool.c: alloc_index */
 	last_qpn = last_qpn - 16;
 
 	return 0;
 
-        if (snprintf(buf, sizeof(buf), "%d\n", last_qpn) < 0) {
-          pr_err("Failed to format buffer: %s", strerror(errno));
-          return -1;
-        }
+	if (snprintf(buf, sizeof(buf), "%d\n", last_qpn) < 0) {
+	  pr_err("Failed to format buffer: %s", strerror(errno));
+	  return -1;
+	}
 
-        fd = open(last_qpn_path, O_WRONLY);
-        if (fd < 0) {
+	fd = open(last_qpn_path, O_WRONLY);
+	if (fd < 0) {
 		pr_err("Failed to open %s: %s", last_qpn_path, strerror(errno));
 		return -1;
 	}
@@ -691,7 +693,7 @@ static int rxe_set_last_qpn(uint32_t qpn)
 
 	close(fd);
 
-        return ret;
+	return ret;
 }
 
 static int ibverbs_restore_qp(struct ibverbs_list_entry * entry, struct task_restore_args *ta)
@@ -751,7 +753,7 @@ static int ibverbs_restore_qp(struct ibverbs_list_entry * entry, struct task_res
 	ret = ibv_restore_object(entry->ibcontext,
 				 (void **)&ibv_qp, IB_UVERBS_OBJECT_QP,
 				 IBV_RESTORE_QP_CREATE, &args, sizeof(args));
-	if (ret < 0) {
+	if (ret) {
 		pr_err("Failed to restore QP\n");
 		return -1;
 	}
@@ -781,9 +783,10 @@ static int ibverbs_restore_qp(struct ibverbs_list_entry * entry, struct task_res
 		int flags;
 		struct ibv_qp_attr attr;
 
+		/* Check target state */
 		if (qp->qp_state == IB_QPS_RESET) {
-			/* Do nothing */
-			break;
+		  /* Do nothing */
+		  break;
 		}
 
 		/* Move to init state */
@@ -809,8 +812,9 @@ static int ibverbs_restore_qp(struct ibverbs_list_entry * entry, struct task_res
 			return -1;
 		}
 
+		/* Check target state */
 		if (qp->qp_state == IB_QPS_INIT) {
-			break;
+		  break;
 		}
 
 		/* Move to RTR state */
@@ -860,6 +864,7 @@ static int ibverbs_restore_qp(struct ibverbs_list_entry * entry, struct task_res
 			return -1;
 		}
 
+		/* Check target state */
 		if (qp->qp_state == IB_QPS_RTR) {
 			break;
 		}
