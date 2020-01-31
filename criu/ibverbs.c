@@ -361,6 +361,7 @@ static int dump_one_ibverbs_qp(IbverbsObject **pb_obj, struct ib_uverbs_dump_obj
 	qp->timeout = dump_qp->attr.timeout;
 	qp->qp_num = dump_qp->qp_num;
 	qp->wqe_index = dump_qp->rxe.wqe_index;
+	qp->comp_psn = dump_qp->rxe.comp_psn;
 
 	qp->rq_start = dump_qp->rq_start;
 	qp->rq_size = dump_qp->rq_size;
@@ -908,6 +909,7 @@ static int ibverbs_restore_qp(struct ibverbs_list_entry * entry, struct task_res
 	restore_rxe_queue(&dump_qp.rq, qp->rxe->rq);
 	restore_rxe_queue(&dump_qp.sq, qp->rxe->sq);
 	dump_qp.wqe_index = qp->wqe_index;
+	dump_qp.comp_psn = qp->comp_psn;
 
 	ret = ibv_restore_object(entry->ibcontext,
 				 (void **)&ibv_qp, IB_UVERBS_OBJECT_QP,
