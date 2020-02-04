@@ -37,6 +37,7 @@ message ibverbs_mr {
 	required uint32	pd_handle	= 5;
 	required uint32	lkey		= 6;
 	required uint32	rkey		= 7;
+	required uint32 mrn			= 8;
 };
 
 message rxe_queue {

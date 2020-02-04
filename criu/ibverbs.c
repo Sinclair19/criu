@@ -211,6 +211,7 @@ static int dump_one_ibverbs_mr(IbverbsObject **pb_obj, struct ib_uverbs_dump_obj
 	mr->pd_handle = dump_mr->pd_handle;
 	mr->lkey = dump_mr->lkey;
 	mr->rkey = dump_mr->rkey;
+	mr->mrn = dump_mr->rxe.mrn;
 
 	(*pb_obj)->type = IBVERBS_OBJECT_TYPE__MR;
 	(*pb_obj)->handle = dump_mr->obj.handle;
@@ -538,6 +539,85 @@ static void *ibverbs_get_object(int object_type, int id)
 	return objects[object_type][id];
 }
 
+static int rxe_set_parameter(const char *path, uint32_t new_val, uint32_t *old_val)
+{
+	int ret;
+	int fd;
+	char buf[32];
+
+	fd = open(path, O_RDWR);
+	if (fd < 0) {
+		pr_err("Failed to open %s: %s", path, strerror(errno));
+		return -1;
+	}
+
+	if (old_val != NULL) {
+		ret = read(fd, buf, sizeof(buf));
+		if (ret < 0) {
+			pr_err("Failed to read old QPN value: %s", strerror(errno));
+			goto out;
+		}
+
+		ret = lseek(fd, 0, SEEK_SET);
+		if (ret < 0) {
+			pr_err("Failed to reset file position: %s", strerror(errno));
+			goto out;
+		}
+
+		ret = sscanf(buf, "%u", old_val);
+		if (ret != 1) {
+			pr_err("Failed to parse input: %s", strerror(errno));
+		}
+	}
+
+	if (snprintf(buf, sizeof(buf), "%d\n", new_val) < 0) {
+		pr_err("Failed to format buffer: %s", strerror(errno));
+		goto out;
+	}
+
+	ret = write(fd, buf, strlen(buf));
+	if (ret < 0) {
+		pr_err("Failed to write %s to %s", buf, path);
+	}
+
+ out:
+	close(fd);
+
+	return ret;
+}
+
+static int rxe_set_last_qpn(uint32_t qpn, uint32_t *old_qpn)
+{
+	const char *last_qpn_path = "/proc/sys/net/rdma_rxe/last_qpn";
+	uint32_t last_qpn = qpn - 1;
+
+	/* XXX: Should actually do this in kernel in rxe_pool.c: alloc_index */
+	last_qpn = last_qpn - 16;
+
+	if (rxe_set_parameter(last_qpn_path, last_qpn, old_qpn) < 0) {
+		pr_err("Failed to set last QPN");
+		return -1;
+	}
+
+	if (old_qpn != NULL) {
+		*old_qpn += 17;
+	}
+
+	return 0;
+}
+
+static int rxe_set_last_mrn(uint32_t new_mrn, uint32_t *old_mrn)
+{
+	const char *last_mrn_path = "/proc/sys/net/rdma_rxe/last_mrn";
+
+	if (rxe_set_parameter(last_mrn_path, new_mrn, old_mrn) < 0) {
+		pr_err("Failed to set last MRN");
+		return -1;
+	}
+
+	return 0;
+}
+
 static int ibverbs_restore_pd(struct ibverbs_list_entry *entry, struct task_restore_args *ta)
 {
 	struct ibv_context *ibcontext = entry->ibcontext;
@@ -573,10 +653,18 @@ static int ibverbs_restore_mr(struct ibverbs_list_entry *entry, struct task_rest
 
 	struct ibv_mr *ibv_mr;
 	struct ibv_pd *pd;
+	u32 old_mrn;
+	int ret;
 
 	pd = ibverbs_get_object(IB_UVERBS_OBJECT_PD, pb_mr->pd_handle);
 	if (!pd) {
 		pr_err("PD object with id %d is not known\n", pb_mr->pd_handle);
+		return -1;
+	}
+
+	ret = rxe_set_last_mrn(pb_mr->mrn, &old_mrn);
+	if (ret < 0) {
+		pr_err("Failed to set MRN\n");
 		return -1;
 	}
 
@@ -587,6 +675,12 @@ static int ibverbs_restore_mr(struct ibverbs_list_entry *entry, struct task_rest
 		return -1;
 	}
 
+	ret = rxe_set_last_mrn(old_mrn, NULL);
+	if (ret < 0) {
+		pr_err("Failed to reset MRN\n");
+		return -1;
+	}
+
 	struct rxe_dump_mr args;
 
 	args.lkey = pb_mr->lkey;
@@ -594,9 +688,9 @@ static int ibverbs_restore_mr(struct ibverbs_list_entry *entry, struct task_rest
 
 	pr_err("CRIU restore keys: %d==%d %d==%d\n", args.lkey, pb_mr->lkey, args.rkey, pb_mr->rkey);
 
-	int ret = ibv_restore_object(entry->ibcontext, (void **)&ibv_mr,
-				     IB_UVERBS_OBJECT_MR, IBV_RESTORE_MR_KEYS,
-				     &args, sizeof(args));
+	ret = ibv_restore_object(entry->ibcontext, (void **)&ibv_mr,
+				 IB_UVERBS_OBJECT_MR, IBV_RESTORE_MR_KEYS,
+				 &args, sizeof(args));
 	if (ret) {
 		pr_err("Failed to restore MR: %s\n", strerror(errno));
 		return -1;
@@ -663,43 +757,10 @@ static int ibverbs_restore_cq(struct ibverbs_list_entry *entry, struct task_rest
 	return 0;
 }
 
-static int rxe_set_last_qpn(uint32_t qpn)
-{
-	int ret;
-	int fd;
-	uint32_t last_qpn = qpn - 1;
-	const char *last_qpn_path = "/proc/sys/net/rdma_rxe/last_qpn";
-	char buf[32];
-
-	/* XXX: Should actually do this in kernel in rxe_pool.c: alloc_index */
-	last_qpn = last_qpn - 16;
-
-	return 0;
-
-	if (snprintf(buf, sizeof(buf), "%d\n", last_qpn) < 0) {
-	  pr_err("Failed to format buffer: %s", strerror(errno));
-	  return -1;
-	}
-
-	fd = open(last_qpn_path, O_WRONLY);
-	if (fd < 0) {
-		pr_err("Failed to open %s: %s", last_qpn_path, strerror(errno));
-		return -1;
-	}
-
-	ret = write(fd, buf, strlen(buf));
-	if (ret < 0) {
-		pr_err("Failed to write %s to %s", buf, last_qpn_path);
-	}
-
-	close(fd);
-
-	return ret;
-}
-
 static int ibverbs_restore_qp(struct ibverbs_list_entry * entry, struct task_restore_args *ta)
 {
 	int ret;
+	uint32_t old_qpn;
 	IbverbsObject *obj = entry->obj;
 	IbverbsQp *qp = obj->qp;
 	struct ibv_qp *ibv_qp;
@@ -746,7 +807,7 @@ static int ibverbs_restore_qp(struct ibverbs_list_entry * entry, struct task_res
 	args.sq.vm_start = qp->sq_start;
 	args.sq.vm_size = qp->sq_size;
 
-	ret = rxe_set_last_qpn(qp->qp_num);
+	ret = rxe_set_last_qpn(qp->qp_num, &old_qpn);
 	if (ret < 0) {
 		return -1;
 	}
@@ -761,6 +822,11 @@ static int ibverbs_restore_qp(struct ibverbs_list_entry * entry, struct task_res
 
 	if (ibv_qp->qp_num != qp->qp_num) {
 		pr_err("Nonmatching QP number: %u expected %u\n", ibv_qp->qp_num, qp->qp_num);
+		return -1;
+	}
+
+	ret = rxe_set_last_qpn(old_qpn, NULL);
+	if (ret < 0) {
 		return -1;
 	}
 
