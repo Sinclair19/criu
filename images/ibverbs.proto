@@ -49,7 +49,7 @@ message rxe_queue {
 
 message rxe_qp {
 	required rxe_queue sq	= 1;
-  	required rxe_queue rq	= 2;
+	required rxe_queue rq	= 2;
 };
 
 message ibverbs_cq {
