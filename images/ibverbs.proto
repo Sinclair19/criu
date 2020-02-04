@@ -112,8 +112,11 @@ message ibverbs_qp {
 	required uint32 timeout			= 30;
 	required uint32 qp_num			= 31;
 	required uint32 wqe_index		= 33;
-	required uint32 comp_psn		= 34;
-	required uint32 msn			= 35;
+	required uint32 req_opcode		= 34;
+	required uint32 comp_psn		= 35;
+	required uint32 comp_opcode		= 36;
+	required uint32 msn			= 37;
+	required uint32 resp_opcode		= 38;
 
 	required ibverbs_ah_attr ah_attr	= 25;
 	required rxe_qp rxe			= 32;
