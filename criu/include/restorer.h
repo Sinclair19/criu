@@ -183,7 +183,10 @@ struct task_restore_args {
 	struct rst_address_range	*kept_ranges;
 	unsigned int			kept_ranges_n;
 
-	/* * * * * * * * * * * * * * * * * * * * */
+	int				*ibverbs_contexts;
+	int				ibverbs_contexts_n;
+
+        /* * * * * * * * * * * * * * * * * * * * */
 
 	unsigned long			task_size;
 	unsigned long			premmapped_addr;

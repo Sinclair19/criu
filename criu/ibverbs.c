@@ -8,6 +8,7 @@
 #include "ibverbs.h"
 #include "mem.h"
 #include "restorer.h"
+#include "rst-malloc.h"
 
 #include "protobuf.h"
 #include "images/ibverbs.pb-c.h"
@@ -28,6 +29,73 @@ struct ibverbs_list_entry {
 static int num_dev;
 static struct ibv_device **dev_list = NULL;
 
+static int *ibverbs_contexts = NULL;
+static int ibverbs_contexts_n = 0;
+
+static int append_context(int context_fd)
+{
+	ibverbs_contexts_n++;
+	ibverbs_contexts = xrealloc(ibverbs_contexts, ibverbs_contexts_n * sizeof(*ibverbs_contexts));
+	if (!ibverbs_contexts) {
+		return -1;
+	}
+
+	ibverbs_contexts[ibverbs_contexts_n - 1] = context_fd;
+
+	return 0;
+}
+
+static int prepare_contexts(struct task_restore_args *ta)
+{
+	ta->ibverbs_contexts = (int *)rst_mem_align_cpos(RM_PRIVATE);
+	ta->ibverbs_contexts_n = ibverbs_contexts_n;
+
+	int *rcontexts;
+	unsigned long size = sizeof(*rcontexts) * ibverbs_contexts_n;
+	rcontexts = rst_mem_alloc(size, RM_PRIVATE);
+	if (!rcontexts) {
+		return -1;
+	}
+
+	memcpy(rcontexts, ibverbs_contexts, sizeof(*rcontexts) * ibverbs_contexts_n);
+
+	return 0;
+}
+
+static int install_rxe_service()
+{
+	int fd;
+	int ret;
+        const char *last_qpn_path = "/proc/sys/net/rdma_rxe/last_qpn";
+        const char *last_mrn_path = "/proc/sys/net/rdma_rxe/last_mrn";
+
+        fd = open(last_qpn_path, O_RDWR);
+	if (fd < 0) {
+		pr_err("Failed to open %s: %s", last_qpn_path, strerror(errno));
+		return -1;
+	}
+
+        ret = install_service_fd(CR_IBVERBS_RXE_QPN, fd);
+        if (ret < 0) {
+		pr_err("Failed to install QPN service fd");
+		return -1;
+	}
+
+        fd = open(last_mrn_path, O_RDWR);
+        if (fd < 0) {
+          pr_err("Failed to open %s: %s", last_mrn_path, strerror(errno));
+          return -1;
+        }
+
+        ret = install_service_fd(CR_IBVERBS_RXE_MRN, fd);
+        if (ret < 0) {
+          pr_err("Failed to install QPN service fd");
+          return -1;
+        }
+
+        return 0;
+}
+
 int init_ibverbs()
 {
 	dev_list = ibv_get_device_list(&num_dev);
@@ -37,7 +105,7 @@ int init_ibverbs()
 		return -1;
 	}
 
-	return 0;
+	return install_rxe_service();
 }
 
 static struct ibv_device* find_ibdev(const char *ib_devname)
@@ -543,68 +611,50 @@ static void *ibverbs_get_object(int object_type, int id)
 	return objects[object_type][id];
 }
 
-static int rxe_set_parameter(const char *path, uint32_t new_val, uint32_t *old_val)
+static int rxe_set_parameter(int fd, uint32_t new_val, uint32_t *old_val)
 {
-	int ret;
-	int fd;
 	char buf[32];
 
-	fd = open(path, O_RDWR);
-	if (fd < 0) {
-		pr_err("Failed to open %s: %s", path, strerror(errno));
-		return -1;
-	}
-
 	if (old_val != NULL) {
-		ret = read(fd, buf, sizeof(buf));
+		int ret = pread(fd, buf, sizeof(buf), 0);
 		if (ret < 0) {
 			pr_err("Failed to read old QPN value: %s", strerror(errno));
-			goto out;
-		}
-
-		ret = lseek(fd, 0, SEEK_SET);
-		if (ret < 0) {
-			pr_err("Failed to reset file position: %s", strerror(errno));
-			goto out;
+			return -1;
 		}
 
 		ret = sscanf(buf, "%u", old_val);
 		if (ret != 1) {
 			pr_err("Failed to parse input: %s", strerror(errno));
+			return -1;
 		}
 	}
 
 	if (snprintf(buf, sizeof(buf), "%d\n", new_val) < 0) {
 		pr_err("Failed to format buffer: %s", strerror(errno));
-		goto out;
+		return -1;
 	}
 
-	ret = write(fd, buf, strlen(buf));
-	if (ret < 0) {
-		pr_err("Failed to write %s to %s", buf, path);
-	}
+        if (pwrite(fd, buf, strlen(buf), 0) < 0) {
+		pr_err("Failed to write %s: %s", buf, strerror(errno));
+		return -1;
+        }
 
- out:
-	close(fd);
-
-	return ret;
+	return 0;
 }
 
 static int rxe_set_last_qpn(uint32_t qpn, uint32_t *old_qpn)
 {
-	const char *last_qpn_path = "/proc/sys/net/rdma_rxe/last_qpn";
-	uint32_t last_qpn = qpn - 1;
-
 	/* XXX: Should actually do this in kernel in rxe_pool.c: alloc_index */
-	last_qpn = last_qpn - 16;
+	uint32_t last_qpn = qpn - 16;
+	int fd = get_service_fd(CR_IBVERBS_RXE_QPN);
 
-	if (rxe_set_parameter(last_qpn_path, last_qpn, old_qpn) < 0) {
+	if (rxe_set_parameter(fd, last_qpn, old_qpn) < 0) {
 		pr_err("Failed to set last QPN");
 		return -1;
-	}
+        }
 
-	if (old_qpn != NULL) {
-		*old_qpn += 17;
+        if (old_qpn != NULL) {
+		*old_qpn += 16;
 	}
 
 	return 0;
@@ -612,14 +662,13 @@ static int rxe_set_last_qpn(uint32_t qpn, uint32_t *old_qpn)
 
 static int rxe_set_last_mrn(uint32_t new_mrn, uint32_t *old_mrn)
 {
-	const char *last_mrn_path = "/proc/sys/net/rdma_rxe/last_mrn";
-
-	if (rxe_set_parameter(last_mrn_path, new_mrn, old_mrn) < 0) {
+	int fd = get_service_fd(CR_IBVERBS_RXE_MRN);
+	if (rxe_set_parameter(fd, new_mrn, old_mrn) < 0) {
 		pr_err("Failed to set last MRN");
 		return -1;
 	}
 
-	return 0;
+        return 0;
 }
 
 static int ibverbs_restore_pd(struct ibverbs_list_entry *entry, struct task_restore_args *ta)
@@ -1062,6 +1111,10 @@ static int ibverbs_open(struct file_desc *d, int *new_fd)
 	pr_info("Opened a device %d %d", ibcontext->cmd_fd, ibcontext->async_fd);
 	last_event_fd = ibcontext->async_fd;
 
+	if (append_context(ibcontext->cmd_fd)) {
+		goto err_close;
+	}
+
 	*new_fd = ibcontext->cmd_fd;
 	return 0;
 
@@ -1144,7 +1197,7 @@ int prepare_ibverbs(struct pstree_item *me, struct task_restore_args *ta)
 		}
 	}
 
-	return 0;
+	return prepare_contexts(ta);
 }
 
 /* Ibevent related functions */
