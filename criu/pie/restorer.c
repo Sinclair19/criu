@@ -1677,6 +1677,18 @@ long __export_restore_task(struct task_restore_args *args)
 	}
 
 	/*
+	 * Ibverbs can release all the restored context
+	 */
+	for (i = 0; i < args->ibverbs_contexts_n; i++) {
+		int ret;
+		ret = sys_fsync(args->ibverbs_contexts[i]);
+		if (ret) {
+			pr_err("Failed to restart ibverbs context");
+			goto core_restore_end;
+		}
+	}
+
+	/*
 	 * Tune up the task fields.
 	 */
 	ret = sys_prctl_safe(PR_SET_NAME, (long)args->comm, 0, 0);

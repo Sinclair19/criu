@@ -28,6 +28,9 @@ enum sfd_type {
 	RPC_SK_OFF,
 	FDSTORE_SK_OFF,
 
+	CR_IBVERBS_RXE_QPN,
+	CR_IBVERBS_RXE_MRN,
+
 	SERVICE_FD_MAX
 };
 
