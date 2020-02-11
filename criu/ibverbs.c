@@ -715,7 +715,7 @@ static int ibverbs_restore_mr(struct ibverbs_list_entry *entry, struct task_rest
 		return -1;
 	}
 
-	ret = rxe_set_last_mrn(pb_mr->mrn, &old_mrn);
+	ret = rxe_set_last_mrn(pb_mr->mrn - 1, &old_mrn);
 	if (ret < 0) {
 		pr_err("Failed to set MRN\n");
 		return -1;
