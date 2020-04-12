@@ -2443,6 +2443,8 @@ int cr_restore_tasks(void)
 		goto err;
 	}
 err:
+	system("echo CRIU_DONE > /dev/kmsg");
+
 	cr_plugin_fini(CR_PLUGIN_STAGE__RESTORE, ret);
 	return ret;
 }
