@@ -509,7 +509,7 @@ static int dump_one_ibverbs(int lfd, u32 id, const struct fd_parms *p)
 
 	int ret = -1;
 	int count;
-	const unsigned int dump_size = 4096;
+	const unsigned int dump_size = 64*1024;
 	void *dump = xzalloc(dump_size);
 	if (!dump) {
 		pr_err("Failed to allocate dump buffer of size %d\n", dump_size);
@@ -583,7 +583,7 @@ const struct fdtype_ops ibverbs_dump_ops = {
 	.dump	= dump_one_ibverbs,
 };
 
-#define ELEM_COUNT 10
+#define ELEM_COUNT 140
 static int last_event_fd;
 static void *objects[IB_UVERBS_OBJECT_TOTAL][ELEM_COUNT];
 
