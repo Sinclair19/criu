@@ -944,6 +944,11 @@ static int vma_remap(VmaEntry *vma_entry, int uffd)
 	else if (dst - src < len)
 		guard = dst + len - PAGE_SIZE;
 
+	if (vma_entry_is(vma_entry, VMA_AREA_IBVERBS_DEV)) {
+		pr_err("IBVERBS_DEV dst 0x%lx src 0x%lx\n", dst, src);
+		return 0;
+	}
+
 	if (src == dst)
 		return 0;
 

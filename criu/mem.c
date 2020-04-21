@@ -869,6 +869,7 @@ static int premap_private_vma(struct pstree_item *t, struct vma_area *vma, void 
 		 * Restore AIO ring buffer content to temporary anonymous area.
 		 * This will be placed in io_setup'ed AIO in restore_aio_ring().
 		 */
+		addr = *tgt_addr;
 		if (vma_entry_is(vma->e, VMA_AREA_AIORING))
 			flag |= MAP_ANONYMOUS;
 		else if (vma_area_is(vma, VMA_FILE_PRIVATE)) {
@@ -882,6 +883,9 @@ static int premap_private_vma(struct pstree_item *t, struct vma_area *vma, void 
 			if (ret < 0) {
 				pr_err("Can't fixup ibverbs VMA\n");
 			}
+		} else if (vma_area_is(vma, VMA_AREA_IBVERBS_DEV)) {
+			flag |= MAP_ANONYMOUS;
+			addr = (void *)vma->e->start;
 		}
 
 		/*
@@ -891,11 +895,10 @@ static int premap_private_vma(struct pstree_item *t, struct vma_area *vma, void 
 		 * bits there. Ideally we'd check for the whole COW-chain
 		 * having any data in.
 		 */
-		addr = mmap(*tgt_addr, size,
+		addr = mmap(addr, size,
 				vma->e->prot | PROT_WRITE,
 				vma->e->flags | MAP_FIXED | flag,
 				vma->e->fd, vma->e->pgoff);
-
 		if (addr == MAP_FAILED) {
 			pr_perror("Unable to map ANON_VMA");
 			return -1;
@@ -967,6 +970,8 @@ static inline bool vma_force_premap(struct vma_area *vma, struct list_head *head
 	if (vma_area_is(vma, VMA_AREA_IBVERBS)) {
 		pr_debug("Force premmap for ibverbs area 0x%"PRIx64":0x%"PRIx64"\n",
 			 vma->e->start, vma->e->end);
+		return true;
+	} else if (vma_area_is(vma, VMA_AREA_IBVERBS_DEV)) {
 		return true;
 	}
 
