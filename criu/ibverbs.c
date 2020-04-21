@@ -777,6 +777,14 @@ static int ibverbs_restore_cq(struct ibverbs_list_entry *entry, struct task_rest
 	args.comp_vector = cq->comp_vector;
 	args.channel = NULL;
 
+	void * tmp_buf = malloc(args.queue.vm_size);
+	if (!tmp_buf) {
+		pr_err("Failed to allocate temporary buffer\n");
+		return -1;
+	}
+	memmove(tmp_buf, (void *)args.queue.vm_start, args.queue.vm_size);
+	munmap((void *)args.queue.vm_start, args.queue.vm_size);
+
 	int ret = ibv_restore_object(entry->ibcontext, (void **)&ibv_cq,
 				     IB_UVERBS_OBJECT_CQ, IBV_RESTORE_CQ_CREATE,
 				     &args, sizeof(args));
@@ -784,6 +792,9 @@ static int ibverbs_restore_cq(struct ibverbs_list_entry *entry, struct task_rest
 		pr_err("Failed to create CQ\n");
 		return -1;
 	}
+
+	memmove((void *)args.queue.vm_start, tmp_buf, args.queue.vm_size);
+	free(tmp_buf);
 
 	if (args.queue.vm_size > 0) {
 		if (keep_address_range((u64)args.queue.vm_start, args.queue.vm_size))
@@ -860,6 +871,21 @@ static int ibverbs_restore_qp(struct ibverbs_list_entry * entry, struct task_res
 	args.sq.vm_start = qp->sq_start;
 	args.sq.vm_size = qp->sq_size;
 
+	void * rq_tmp = malloc(args.rq.vm_size);
+	if (!rq_tmp) {
+		pr_err("Failed to allocate temporary buffer\n");
+		return -1;
+	}
+	memmove(rq_tmp, (void *)args.rq.vm_start, args.rq.vm_size);
+	munmap((void *)args.rq.vm_start, args.rq.vm_size);
+	void * sq_tmp = malloc(args.sq.vm_size);
+	if (!sq_tmp) {
+		pr_err("Failed to allocate temporary buffer\n");
+		return -1;
+	}
+	memmove(sq_tmp, (void *)args.sq.vm_start, args.sq.vm_size);
+	munmap((void *)args.sq.vm_start, args.sq.vm_size);
+
 	ret = rxe_set_last_qpn(qp->qp_num, &old_qpn);
 	if (ret < 0) {
 		return -1;
@@ -882,6 +908,11 @@ static int ibverbs_restore_qp(struct ibverbs_list_entry * entry, struct task_res
 	if (ret < 0) {
 		return -1;
 	}
+
+	memmove((void *)args.rq.vm_start, rq_tmp, args.rq.vm_size);
+	free(rq_tmp);
+	memmove((void *)args.sq.vm_start, sq_tmp, args.sq.vm_size);
+	free(sq_tmp);
 
 	if (args.rq.vm_size > 0) {
 		if (keep_address_range((u64) args.rq.vm_start, args.rq.vm_size)) {
