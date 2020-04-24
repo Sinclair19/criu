@@ -350,6 +350,8 @@ static struct parasite_dump_pages_args *prep_dump_pages_args(struct parasite_ctl
 			continue;
 		if (vma->e->prot & PROT_READ)
 			continue;
+		if (vma_entry_is(vma->e, VMA_AREA_IBVERBS_DEV) && skip_non_trackable)
+			continue;
 
 		p_vma->start = vma->e->start;
 		p_vma->len = vma_area_len(vma);
