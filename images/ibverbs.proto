@@ -65,7 +65,8 @@ message ibverbs_cq {
 message ibv_global_route {
 };
 
-message ibverbs_ah_attr {
+message ibverbs_ah {
+	required uint32			pd_handle		= 1;
 	required uint32			dlid		= 2;
 	required uint32			sl		= 3;
 	required uint32			src_path_bits	= 4;
@@ -118,7 +119,7 @@ message ibverbs_qp {
 	required uint32 msn			= 37;
 	required uint32 resp_opcode		= 38;
 
-	required ibverbs_ah_attr ah_attr	= 25;
+	required ibverbs_ah ah_attr	= 25;
 	required rxe_qp rxe			= 32;
 };
 
@@ -129,6 +130,7 @@ message ibverbs_object {
 	optional ibverbs_mr		mr	= 4;
 	optional ibverbs_cq		cq	= 5;
 	optional ibverbs_qp		qp	= 6;
+	optional ibverbs_ah		ah	= 7;
 };
 
 message ibverbs_entry {
