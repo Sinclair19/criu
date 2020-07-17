@@ -349,9 +349,87 @@ static int dump_one_ibverbs_cq(IbverbsObject **pb_obj, struct ib_uverbs_dump_obj
 	return sizeof(*dump_cq);
 }
 
+static IbverbsAh *construct_pb_ibverbs_ah_attr(struct ib_uverbs_ah_attr *attr)
+{
+	IbverbsAh *ah_attr;
+
+	ah_attr = xmalloc(sizeof(*ah_attr));
+	if (!ah_attr) {
+		goto out_err1;
+	}
+	ibverbs_ah__init(ah_attr);
+
+	ah_attr->dgid.data = xmalloc(sizeof(attr->grh.dgid));
+	if (!ah_attr->dgid.data) {
+		goto out_err2;
+	}
+
+	ah_attr->dgid.len = sizeof(attr->grh.dgid);
+	memcpy(ah_attr->dgid.data, attr->grh.dgid, ah_attr->dgid.len);
+	ah_attr->flow_label = attr->grh.flow_label;
+	ah_attr->sgid_index = attr->grh.sgid_index;
+	ah_attr->hop_limit = attr->grh.hop_limit;
+	ah_attr->traffic_class = attr->grh.traffic_class;
+
+	ah_attr->dlid = attr->dlid;
+	ah_attr->sl = attr->sl;
+	ah_attr->src_path_bits = attr->src_path_bits;
+	ah_attr->static_rate = attr->static_rate;
+	ah_attr->is_global = attr->is_global;
+	ah_attr->port_num = attr->port_num;
+
+	ah_attr->pd_handle = UINT32_MAX;
+
+	return ah_attr;
+
+ out_err2:
+	xfree(ah_attr);
+ out_err1:
+	return NULL;
+}
+
+static int extract_pb_ibverbs_ah_attr(IbverbsAh *ah_attr, struct ibv_ah_attr *attr)
+{
+	if (ah_attr->dgid.len != sizeof(attr->grh.dgid)) {
+		pr_err("Unexpected dgid length: %lu expected %lu\n",
+		       ah_attr->dgid.len, sizeof(attr->grh.dgid));
+		goto out_err1;
+	}
+
+	memcpy(attr->grh.dgid.raw, ah_attr->dgid.data, ah_attr->dgid.len);
+	attr->grh.flow_label = ah_attr->flow_label;
+	attr->grh.sgid_index = ah_attr->sgid_index;
+	attr->grh.hop_limit = ah_attr->hop_limit;
+	attr->grh.traffic_class = ah_attr->traffic_class;
+
+	attr->dlid = ah_attr->dlid;
+	attr->sl = ah_attr->sl;
+	attr->src_path_bits = ah_attr->src_path_bits;
+	attr->static_rate = ah_attr->static_rate;
+	attr->is_global = ah_attr->is_global;
+	attr->port_num = ah_attr->port_num;
+
+	return 0;
+
+ out_err1:
+	return -1;
+}
+
+#if 0
+static void destroy_pb_ibverbs_ah_attr(IbverbsAh *ah_attr)
+{
+	if (ah_attr) {
+		xfree(ah_attr->dgid.data);
+	}
+
+	xfree(ah_attr);
+}
+#endif
+
 static int dump_one_ibverbs_qp(IbverbsObject **pb_obj, struct ib_uverbs_dump_object *dump_obj)
 {
 	struct ib_uverbs_dump_object_qp *dump_qp;
+	struct ib_uverbs_ah_attr attr;
 	IbverbsQp *qp;
 
 	dump_qp = container_of(dump_obj, struct ib_uverbs_dump_object_qp, obj);
@@ -370,27 +448,13 @@ static int dump_one_ibverbs_qp(IbverbsObject **pb_obj, struct ib_uverbs_dump_obj
 	ibverbs_object__init(*pb_obj);
 	qp = xmalloc(sizeof(*qp));
 	if (!qp) {
-		xfree(*pb_obj);
-		return -1;
+		goto out_err1;
 	}
 	ibverbs_qp__init(qp);
 
-	qp->ah_attr = xmalloc(sizeof(*qp->ah_attr));
-	if (!qp->ah_attr) {
-		xfree(qp);
-		xfree(*pb_obj);
-		return -1;
-	}
-	ibverbs_ah_attr__init(qp->ah_attr);
-
-	qp->ah_attr->dgid.data = xmalloc(sizeof(dump_qp->attr.ah_attr.grh.dgid));
-	if (!qp->ah_attr->dgid.data) {
-		goto out_err;
-	}
-
 	qp->rxe = pballoc_rxe_qp();
 	if (!qp->rxe) {
-		goto out_err;
+		goto out_err2;
 	}
 
 	qp->pd_handle = dump_qp->pd_handle;
@@ -409,19 +473,11 @@ static int dump_one_ibverbs_qp(IbverbsObject **pb_obj, struct ib_uverbs_dump_obj
 	qp->max_dest_rd_atomic = dump_qp->attr.max_dest_rd_atomic;
 	qp->min_rnr_timer = dump_qp->attr.path_mtu;
 
-	qp->ah_attr->dgid.len = sizeof(dump_qp->attr.ah_attr.grh.dgid);
-	memcpy(qp->ah_attr->dgid.data, dump_qp->attr.ah_attr.grh.dgid, qp->ah_attr->dgid.len);
-	qp->ah_attr->flow_label = dump_qp->attr.ah_attr.grh.flow_label;
-	qp->ah_attr->sgid_index = dump_qp->attr.ah_attr.grh.sgid_index;
-	qp->ah_attr->hop_limit = dump_qp->attr.ah_attr.grh.hop_limit;
-	qp->ah_attr->traffic_class = dump_qp->attr.ah_attr.grh.traffic_class;
-
-	qp->ah_attr->dlid = dump_qp->attr.ah_attr.dlid;
-	qp->ah_attr->sl = dump_qp->attr.ah_attr.sl;
-	qp->ah_attr->src_path_bits = dump_qp->attr.ah_attr.src_path_bits;
-	qp->ah_attr->static_rate = dump_qp->attr.ah_attr.static_rate;
-	qp->ah_attr->is_global = dump_qp->attr.ah_attr.is_global;
-	qp->ah_attr->port_num = dump_qp->attr.ah_attr.port_num;
+	memcpy(&attr, &dump_qp->attr.ah_attr, sizeof(attr));
+	qp->ah_attr = construct_pb_ibverbs_ah_attr(&attr);
+	if (!qp->ah_attr) {
+		goto out_err3;
+	}
 
 	qp->sq_psn = dump_qp->attr.sq_psn;
 	qp->max_rd_atomic = dump_qp->attr.max_rd_atomic;
@@ -461,12 +517,51 @@ static int dump_one_ibverbs_qp(IbverbsObject **pb_obj, struct ib_uverbs_dump_obj
 
 	return sizeof(*dump_qp);
 
- out_err:
-	xfree(qp->ah_attr->dgid.data);
-	xfree(qp->ah_attr);
+ out_err3:
+	xfree(qp->rxe);
+ out_err2:
 	xfree(qp);
+ out_err1:
 	xfree(*pb_obj);
 
+	return -1;
+}
+
+static int dump_one_ibverbs_ah(IbverbsObject **pb_obj, struct ib_uverbs_dump_object *dump_obj)
+{
+	struct ib_uverbs_dump_object_ah *dump_ah;
+	struct ib_uverbs_ah_attr attr;
+	IbverbsAh *ah;
+
+	dump_ah = container_of(dump_obj, struct ib_uverbs_dump_object_ah, obj);
+	pr_err("Found object AH: %d dlid: %d port %d\n", dump_ah->obj.handle, dump_ah->attr.dlid, dump_ah->attr.port_num);
+
+	if (dump_obj->size != sizeof(*dump_ah)) {
+		pr_err("Unmatched object size: %d expected %ld\n", dump_obj->size, sizeof(*dump_ah));
+		return -1;
+	}
+
+	*pb_obj = xmalloc(sizeof(**pb_obj));
+	if (!*pb_obj) {
+		return -1;
+	}
+	ibverbs_object__init(*pb_obj);
+
+	memcpy(&attr, &dump_ah->attr, sizeof(attr));
+	ah = construct_pb_ibverbs_ah_attr(&attr);
+	if (!ah) {
+		goto out_err1;
+	}
+	ah->pd_handle = dump_ah->pd_handle;
+
+	(*pb_obj)->type = IBVERBS_OBJECT_TYPE__AH;
+	(*pb_obj)->handle = dump_ah->obj.handle;
+	(*pb_obj)->ah = ah;
+
+	return sizeof(*dump_ah);
+
+ out_err1:
+	xfree(pb_obj);
 	return -1;
 }
 
@@ -548,6 +643,9 @@ static int dump_one_ibverbs(int lfd, u32 id, const struct fd_parms *p)
 			break;
 		case IB_UVERBS_OBJECT_QP:
 			ret = dump_one_ibverbs_qp(&ibv.objs[i], obj);
+			break;
+		case IB_UVERBS_OBJECT_AH:
+			ret = dump_one_ibverbs_ah(&ibv.objs[i], obj);
 			break;
 		default:
 			pr_err("Unknown object type: %d\n", obj->type);
@@ -772,8 +870,8 @@ static int ibverbs_restore_cq(struct ibverbs_list_entry *entry, struct task_rest
 	struct ibv_restore_cq args;
 
 	args.cqe = cq->cqe;
-	args.queue.vm_start = cq->vm_start;
-	args.queue.vm_size = cq->vm_size;
+	args.queue.vm_start = cq->rxe.start;
+	args.queue.vm_size = cq->rxe.size;
 	args.comp_vector = cq->comp_vector;
 	args.channel = NULL;
 
@@ -865,11 +963,11 @@ static int ibverbs_restore_qp(struct ibverbs_list_entry * entry, struct task_res
 	args.attr.cap.max_recv_sge = qp->max_recv_sge;
 	args.attr.cap.max_inline_data = qp->max_inline_data;
 
-	args.rq.vm_start = qp->rq_start;
-	args.rq.vm_size = qp->rq_size;
+	args.rq.start = qp->rq_start;
+	args.rq.size = qp->rq_size;
 
-	args.sq.vm_start = qp->sq_start;
-	args.sq.vm_size = qp->sq_size;
+	args.sq.start = qp->sq_start;
+	args.sq.size = qp->sq_size;
 
 	void * rq_tmp = malloc(args.rq.vm_size);
 	if (!rq_tmp) {
@@ -981,23 +1079,7 @@ static int ibverbs_restore_qp(struct ibverbs_list_entry * entry, struct task_res
 				  IBV_QP_MAX_DEST_RD_ATOMIC |
 				  IBV_QP_MIN_RNR_TIMER);
 
-			if (qp->ah_attr->dgid.len != sizeof(attr.ah_attr.grh.dgid)) {
-				pr_err("Unexpected dgid length: %lu expected %lu\n",
-				       qp->ah_attr->dgid.len,
-				       sizeof(attr.ah_attr.grh.dgid));
-			}
-			memcpy(attr.ah_attr.grh.dgid.raw, qp->ah_attr->dgid.data, qp->ah_attr->dgid.len);
-			attr.ah_attr.grh.flow_label = qp->ah_attr->flow_label;
-			attr.ah_attr.grh.sgid_index = qp->ah_attr->sgid_index;
-			attr.ah_attr.grh.hop_limit = qp->ah_attr->hop_limit;
-			attr.ah_attr.grh.traffic_class = qp->ah_attr->traffic_class;
-
-			attr.ah_attr.dlid = qp->ah_attr->dlid;
-			attr.ah_attr.sl = qp->ah_attr->sl;
-			attr.ah_attr.src_path_bits = qp->ah_attr->src_path_bits;
-			attr.ah_attr.static_rate = qp->ah_attr->static_rate;
-			attr.ah_attr.is_global = qp->ah_attr->is_global;
-			attr.ah_attr.port_num = qp->ah_attr->port_num;
+			extract_pb_ibverbs_ah_attr(qp->ah_attr, &attr.ah_attr);
 
 			attr.path_mtu = qp->path_mtu;
 			attr.dest_qp_num = qp->dest_qp_num;
@@ -1070,10 +1152,38 @@ static int ibverbs_restore_qp(struct ibverbs_list_entry * entry, struct task_res
 				 IBV_RESTORE_QP_REFILL, &dump_qp, sizeof(dump_qp));
 	if (ret) {
 		pr_err("Failed to restore QP\n");
+
+static int ibverbs_restore_ah(struct ibverbs_list_entry *entry, struct task_restore_args *ta)
+{
+	IbverbsObject *obj = entry->obj;
+	IbverbsAh *ah = obj->ah;
+	struct ibv_ah *ibv_ah;
+	struct ibv_pd *pd;
+
+	struct ibv_ah_attr attr;
+
+	pd = ibverbs_get_object(IB_UVERBS_OBJECT_PD, ah->pd_handle);
+	if (!pd) {
+		pr_err("Failed to find PD object with id: %d\n", ah->pd_handle);
 		return -1;
 	}
 
-	pr_err("Restored QP object %d\n", obj->handle);
+	if (extract_pb_ibverbs_ah_attr(ah, &attr)) {
+		return -1;
+	}
+
+	ibv_ah = ibv_create_ah(pd, &attr);
+	if (!ibv_ah) {
+		pr_err("Failed to create AH\n");
+		return -1;
+	}
+
+	if (ibverbs_remember_object(IB_UVERBS_OBJECT_AH, ibv_ah->handle, ibv_ah)) {
+		pr_err("Failed to remember AH object with id %d\n", ibv_ah->handle);
+		return -1;
+	}
+
+	pr_err("Restored AH object %d\n", obj->handle);
 	return 0;
 }
 
@@ -1131,6 +1241,9 @@ static int ibverbs_open(struct file_desc *d, int *new_fd)
 			break;
 		case IBVERBS_OBJECT_TYPE__QP:
 			le->restore = ibverbs_restore_qp;
+			break;
+		case IBVERBS_OBJECT_TYPE__AH:
+			le->restore = ibverbs_restore_ah;
 			break;
 		default:
 			pr_err("Object type is not supported: %d\n", le->obj->type);
