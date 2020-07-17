@@ -666,6 +666,7 @@ static int dump_one_ibverbs(int lfd, u32 id, const struct fd_parms *p)
 	}
 
  out:
+	/* XXX: Objects are deeply hierarchical. Memory leaks are unavoidable */
 	xfree(dump);
 	if (ibv.objs) {
 		for (int i = 0; i < count; i++) {
