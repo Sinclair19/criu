@@ -29,6 +29,7 @@ struct ibverbs_list_entry {
 static int num_dev;
 static struct ibv_device **dev_list = NULL;
 
+static struct ibv_context *IBCONTEXT;
 static int *ibverbs_contexts = NULL;
 static int ibverbs_contexts_n = 0;
 
@@ -172,46 +173,46 @@ static void pr_info_ibverbs(char *action, IbverbsEntry *ibv)
 	pr_info("IB verbs %s: id %#08x flags %#04x\n", action, ibv->id, ibv->flags);
 }
 
-static RxeQp *pballoc_rxe_qp()
+static IbverbsQueue *pballoc_queue()
 {
-	RxeQueue *sq = NULL, *rq = NULL;
-	RxeQp *qp = NULL;
+	IbverbsQueue *queue = NULL;
+	RxeQueue *rxe = NULL;
 
-	sq = xmalloc(sizeof(*sq));
-	rq = xmalloc(sizeof(*rq));
-	qp = xmalloc(sizeof(*qp));
+	queue = xmalloc(sizeof(*queue));
+	rxe = xmalloc(sizeof(*rxe));
 
-	if (!sq || !rq || !qp) {
-		xfree(qp);
-		xfree(sq);
-		xfree(rq);
+	if (!queue || !rxe) {
+		xfree(queue);
+		xfree(rxe);
 		return NULL;
 	}
 
-	rxe_queue__init(sq);
-	rxe_queue__init(rq);
-	rxe_qp__init(qp);
+	ibverbs_queue__init(queue);
+	rxe_queue__init(rxe);
 
-	qp->sq = sq;
-	qp->rq = rq;
+	queue->rxe = rxe;
 
-	return qp;
+	return queue;
 }
 
-static void save_rxe_queue(RxeQueue *rq, struct rxe_dump_queue *dump_queue)
+static void save_rxe_queue(IbverbsQueue *rq, struct rxe_dump_queue *dump_queue)
 {
-	rq->log2_elem_size = dump_queue->log2_elem_size;
-	rq->index_mask = dump_queue->index_mask;
-	rq->producer_index = dump_queue->producer_index;
-	rq->consumer_index = dump_queue->consumer_index;
+	rq->start = dump_queue->start;
+	rq->size = dump_queue->size;
+	rq->rxe->log2_elem_size = dump_queue->log2_elem_size;
+	rq->rxe->index_mask = dump_queue->index_mask;
+	rq->rxe->producer_index = dump_queue->producer_index;
+	rq->rxe->consumer_index = dump_queue->consumer_index;
 }
 
-static void restore_rxe_queue(struct rxe_dump_queue *dump_queue, RxeQueue *rq)
+static void restore_rxe_queue(struct rxe_dump_queue *dump_queue, IbverbsQueue *rq)
 {
-	dump_queue->log2_elem_size = rq->log2_elem_size;
-	dump_queue->index_mask = rq->index_mask;
-	dump_queue->producer_index = rq->producer_index;
-	dump_queue->consumer_index = rq->consumer_index;
+	dump_queue->start = rq->start;
+	dump_queue->size = rq->size;
+	dump_queue->log2_elem_size = rq->rxe->log2_elem_size;
+	dump_queue->index_mask = rq->rxe->index_mask;
+	dump_queue->producer_index = rq->rxe->producer_index;
+	dump_queue->consumer_index = rq->rxe->consumer_index;
 }
 
 static int dump_one_ibverbs_pd(IbverbsObject **pb_obj, struct ib_uverbs_dump_object *dump_obj)
@@ -221,7 +222,7 @@ static int dump_one_ibverbs_pd(IbverbsObject **pb_obj, struct ib_uverbs_dump_obj
 
 	dump_pd = container_of(dump_obj, struct ib_uverbs_dump_object_pd, obj);
 
-	pr_err("Found object PD: %d\n", dump_pd->obj.handle);
+	pr_debug("Found object PD: %d\n", dump_pd->obj.handle);
 
 	if (dump_obj->size != sizeof(*dump_pd)) {
 		pr_err("Unmatched object size: %d expected %ld\n", dump_obj->size, sizeof(*dump_pd));
@@ -247,6 +248,39 @@ static int dump_one_ibverbs_pd(IbverbsObject **pb_obj, struct ib_uverbs_dump_obj
 	return sizeof(*dump_pd);
 }
 
+static int dump_one_ibverbs_comp_channel(IbverbsObject **pb_obj, struct ib_uverbs_dump_object *dump_obj)
+{
+	struct ib_uverbs_dump_object_comp_channel *dump_comp_channel;
+	IbverbsCompChannel *comp_channel;
+
+	dump_comp_channel = container_of(dump_obj, struct ib_uverbs_dump_object_comp_channel, obj);
+
+	pr_debug("Found object COMP_CHANNEL: %d\n", dump_comp_channel->obj.handle);
+
+	if (dump_obj->size != sizeof(*dump_comp_channel)) {
+		pr_err("Unmatched object size: %d expected %ld\n", dump_obj->size, sizeof(*dump_comp_channel));
+		return -1;
+	}
+
+	*pb_obj = xmalloc(sizeof(**pb_obj));
+	if (!*pb_obj) {
+		return -1;
+	}
+	ibverbs_object__init(*pb_obj);
+	comp_channel = xmalloc(sizeof(*comp_channel));
+	if (!comp_channel) {
+		xfree(*pb_obj);
+		return -1;
+	}
+	ibverbs_comp_channel__init(comp_channel);
+
+	(*pb_obj)->type = IBVERBS_OBJECT_TYPE__COMP_CHANNEL;
+	(*pb_obj)->handle = dump_comp_channel->obj.handle;
+	(*pb_obj)->comp_channel = comp_channel;
+
+	return sizeof(*dump_comp_channel);
+}
+
 static int dump_one_ibverbs_mr(IbverbsObject **pb_obj, struct ib_uverbs_dump_object *dump_obj,
 			       struct vm_area_list *vmas)
 {
@@ -254,7 +288,8 @@ static int dump_one_ibverbs_mr(IbverbsObject **pb_obj, struct ib_uverbs_dump_obj
 	IbverbsMr *mr;
 
 	dump_mr = container_of(dump_obj, struct ib_uverbs_dump_object_mr, obj);
-	pr_err("Found object MR: %d @0x%llx + 0x%llx\n", dump_mr->obj.handle, dump_mr->address, dump_mr->length);
+	pr_debug("Found object MR: %d @0x%llx + 0x%llx\n", dump_mr->obj.handle,
+		 dump_mr->address, dump_mr->length);
 
 	if (dump_obj->size != sizeof(*dump_mr)) {
 		pr_err("Unmatched object size: %d expected %ld\n", dump_obj->size, sizeof(*dump_mr));
@@ -287,8 +322,8 @@ static int dump_one_ibverbs_mr(IbverbsObject **pb_obj, struct ib_uverbs_dump_obj
 
 	struct vma_area *vma, *p;
 	list_for_each_entry_safe(vma, p, &vmas->h, list) {
-		if ((vma->e->end < mr->address) ||
-		    (mr->address + mr->length < vma->e->start)) {
+		if ((vma->e->end - 1 < mr->address) ||
+		    (mr->address + mr->length - 1 < vma->e->start)) {
 			/* No overlap. */
 			continue;
 		}
@@ -307,7 +342,7 @@ static int dump_one_ibverbs_cq(IbverbsObject **pb_obj, struct ib_uverbs_dump_obj
 
 	dump_cq = container_of(dump_obj, struct ib_uverbs_dump_object_cq, obj);
 
-	pr_err("Found object CQ: %d\n", dump_cq->obj.handle);
+	pr_debug("Found object CQ: %d\n", dump_cq->obj.handle);
 
 	if (dump_obj->size != sizeof(*dump_cq)) {
 		pr_err("Unmatched object size: %d expected %ld\n", dump_obj->size, sizeof(*dump_cq));
@@ -316,37 +351,40 @@ static int dump_one_ibverbs_cq(IbverbsObject **pb_obj, struct ib_uverbs_dump_obj
 
 	*pb_obj = xmalloc(sizeof(**pb_obj));
 	if (!*pb_obj) {
-		return -1;
+		goto out_err1;
 	}
 	ibverbs_object__init(*pb_obj);
 	cq = xmalloc(sizeof(*cq));
 	if (!cq) {
-		xfree(*pb_obj);
-		return -1;
+		goto out_err2;
 	}
 	ibverbs_cq__init(cq);
 
-	cq->rxe = xmalloc(sizeof(*cq->rxe));
-	if (!cq->rxe) {
-		xfree(*pb_obj);
-		xfree(cq);
-		return -1;
+	cq->queue = pballoc_queue();
+	if (!cq->queue) {
+		goto out_err3;
 	}
-	rxe_queue__init(cq->rxe);
 
 	cq->cqe = dump_cq->cqe;
 	cq->comp_channel = dump_cq->comp_channel;
-	cq->vm_start = dump_cq->vm_start;
-	cq->vm_size = dump_cq->vm_size;
 	cq->comp_vector = dump_cq->comp_vector;
+        cq->comp_events_reported = dump_cq->comp_events_reported;
+        cq->async_events_reported = dump_cq->async_events_reported;
 
-	save_rxe_queue(cq->rxe, &dump_cq->rxe);
+        save_rxe_queue(cq->queue, &dump_cq->rxe);
 
 	(*pb_obj)->type = IBVERBS_OBJECT_TYPE__CQ;
 	(*pb_obj)->handle = dump_cq->obj.handle;
 	(*pb_obj)->cq = cq;
 
 	return sizeof(*dump_cq);
+
+ out_err3:
+	xfree(cq);
+ out_err2:
+	xfree(*pb_obj);
+ out_err1:
+	return -1;
 }
 
 static IbverbsAh *construct_pb_ibverbs_ah_attr(struct ib_uverbs_ah_attr *attr)
@@ -415,7 +453,6 @@ static int extract_pb_ibverbs_ah_attr(IbverbsAh *ah_attr, struct ibv_ah_attr *at
 	return -1;
 }
 
-#if 0
 static void destroy_pb_ibverbs_ah_attr(IbverbsAh *ah_attr)
 {
 	if (ah_attr) {
@@ -424,19 +461,20 @@ static void destroy_pb_ibverbs_ah_attr(IbverbsAh *ah_attr)
 
 	xfree(ah_attr);
 }
-#endif
 
 static int dump_one_ibverbs_qp(IbverbsObject **pb_obj, struct ib_uverbs_dump_object *dump_obj)
 {
 	struct ib_uverbs_dump_object_qp *dump_qp;
 	struct ib_uverbs_ah_attr attr;
+	int dump_qp_size;
 	IbverbsQp *qp;
 
 	dump_qp = container_of(dump_obj, struct ib_uverbs_dump_object_qp, obj);
+	dump_qp_size = sizeof(*dump_qp) + dump_qp->rxe.srq_wqe_size;
 
-	pr_err("Found object QP: %d\n", dump_qp->obj.handle);
+	pr_debug("Found object QP: %d\n", dump_qp->obj.handle);
 
-	if (dump_obj->size != sizeof(*dump_qp)) {
+	if (dump_obj->size != dump_qp_size) {
 		pr_err("Unmatched object size: %d expected %ld\n", dump_obj->size, sizeof(*dump_qp));
 		return -1;
 	}
@@ -452,14 +490,18 @@ static int dump_one_ibverbs_qp(IbverbsObject **pb_obj, struct ib_uverbs_dump_obj
 	}
 	ibverbs_qp__init(qp);
 
-	qp->rxe = pballoc_rxe_qp();
-	if (!qp->rxe) {
+	qp->rq = pballoc_queue();
+	if (!qp->rq) {
 		goto out_err2;
+	}
+
+	qp->sq = pballoc_queue();
+	if (!qp->sq) {
+		goto out_err3;
 	}
 
 	qp->pd_handle = dump_qp->pd_handle;
 	qp->qp_type = dump_qp->qp_type;
-	qp->srq_handle = dump_qp->srq_handle;
 	qp->sq_sig_all = dump_qp->sq_sig_all;
 	qp->qp_state = dump_qp->attr.qp_state;
 
@@ -476,7 +518,7 @@ static int dump_one_ibverbs_qp(IbverbsObject **pb_obj, struct ib_uverbs_dump_obj
 	memcpy(&attr, &dump_qp->attr.ah_attr, sizeof(attr));
 	qp->ah_attr = construct_pb_ibverbs_ah_attr(&attr);
 	if (!qp->ah_attr) {
-		goto out_err3;
+		goto out_err4;
 	}
 
 	qp->sq_psn = dump_qp->attr.sq_psn;
@@ -492,13 +534,21 @@ static int dump_one_ibverbs_qp(IbverbsObject **pb_obj, struct ib_uverbs_dump_obj
 	qp->msn = dump_qp->rxe.msn;
 	qp->resp_opcode = dump_qp->rxe.resp_opcode;
 
-	qp->rq_start = dump_qp->rq_start;
-	qp->rq_size = dump_qp->rq_size;
 	qp->rcq_handle = dump_qp->rcq_handle;
 
 	qp->scq_handle = dump_qp->scq_handle;
-	qp->sq_start = dump_qp->sq_start;
-	qp->sq_size = dump_qp->sq_size;
+
+	qp->srq_handle = dump_qp->srq_handle;
+	if (qp->srq_handle != UINT32_MAX) {
+		/* There is an SRQ WQE */
+		qp->has_srq_wqe = true;
+		qp->srq_wqe.data = xmalloc(dump_qp->rxe.srq_wqe_size);
+		if (!qp->srq_wqe.data) {
+			goto out_err5;
+		}
+		qp->srq_wqe.len = dump_qp->rxe.srq_wqe_size;
+		memcpy(qp->srq_wqe.data, &dump_qp->rxe.data[dump_qp->rxe.srq_wqe_offset], qp->srq_wqe.len);
+	}
 
 	qp->max_send_wr = dump_qp->attr.cap.max_send_wr;
 	qp->max_recv_wr = dump_qp->attr.cap.max_recv_wr;
@@ -506,21 +556,80 @@ static int dump_one_ibverbs_qp(IbverbsObject **pb_obj, struct ib_uverbs_dump_obj
 	qp->max_recv_sge = dump_qp->attr.cap.max_recv_sge;
 	qp->max_inline_data = dump_qp->attr.cap.max_inline_data;
 
-	save_rxe_queue(qp->rxe->sq, &dump_qp->rxe.sq);
-	save_rxe_queue(qp->rxe->rq, &dump_qp->rxe.rq);
+	save_rxe_queue(qp->sq, &dump_qp->rxe.sq);
+	save_rxe_queue(qp->rq, &dump_qp->rxe.rq);
 
 	(*pb_obj)->type = IBVERBS_OBJECT_TYPE__QP;
 	(*pb_obj)->handle = dump_qp->obj.handle;
 	(*pb_obj)->qp = qp;
 
-	pr_err("Dumped QP type %d\n", qp->qp_type);
+	pr_debug("Dumped QP type %d\n", qp->qp_type);
 
-	return sizeof(*dump_qp);
+	return dump_qp_size;
 
+ out_err5:
+	destroy_pb_ibverbs_ah_attr(qp->ah_attr);
+ out_err4:
+	xfree(qp->sq);
  out_err3:
-	xfree(qp->rxe);
+	xfree(qp->rq);
  out_err2:
 	xfree(qp);
+ out_err1:
+	xfree(*pb_obj);
+
+	return -1;
+}
+
+static int dump_one_ibverbs_srq(IbverbsObject **pb_obj, struct ib_uverbs_dump_object *dump_obj)
+{
+	struct ib_uverbs_dump_object_srq *dump_srq;
+	IbverbsSrq *srq;
+
+	dump_srq = container_of(dump_obj, struct ib_uverbs_dump_object_srq, obj);
+
+	pr_debug("Found object SRQ: %d\n", dump_srq->obj.handle);
+
+	if (dump_obj->size != sizeof(*dump_srq)) {
+		pr_err("Unmatched object size: %d expected %ld\n", dump_obj->size, sizeof(*dump_srq));
+		return -1;
+	}
+
+	*pb_obj = xmalloc(sizeof(**pb_obj));
+	if (!*pb_obj) {
+		return -1;
+	}
+	ibverbs_object__init(*pb_obj);
+	srq = xmalloc(sizeof(*srq));
+	if (!srq) {
+		goto out_err1;
+	}
+	ibverbs_srq__init(srq);
+
+	srq->queue = pballoc_queue();
+	if (!srq->queue) {
+		goto out_err2;
+	}
+
+	srq->pd_handle = dump_srq->pd_handle;
+	srq->cq_handle = dump_srq->cq_handle;
+	srq->srq_type = dump_srq->srq_type;
+	srq->max_wr = dump_srq->max_wr;
+	srq->max_sge = dump_srq->max_sge;
+	srq->srq_limit = dump_srq->srq_limit;
+
+	save_rxe_queue(srq->queue, &dump_srq->queue);
+
+	(*pb_obj)->type = IBVERBS_OBJECT_TYPE__SRQ;
+	(*pb_obj)->handle = dump_srq->obj.handle;
+	(*pb_obj)->srq = srq;
+
+	pr_debug("Dumped SRQ type %d\n", srq->srq_type);
+
+	return sizeof(*dump_srq);
+
+ out_err2:
+	xfree(srq);
  out_err1:
 	xfree(*pb_obj);
 
@@ -534,7 +643,7 @@ static int dump_one_ibverbs_ah(IbverbsObject **pb_obj, struct ib_uverbs_dump_obj
 	IbverbsAh *ah;
 
 	dump_ah = container_of(dump_obj, struct ib_uverbs_dump_object_ah, obj);
-	pr_err("Found object AH: %d dlid: %d port %d\n", dump_ah->obj.handle, dump_ah->attr.dlid, dump_ah->attr.port_num);
+	pr_debug("Found object AH: %d dlid: %d port %d\n", dump_ah->obj.handle, dump_ah->attr.dlid, dump_ah->attr.port_num);
 
 	if (dump_obj->size != sizeof(*dump_ah)) {
 		pr_err("Unmatched object size: %d expected %ld\n", dump_obj->size, sizeof(*dump_ah));
@@ -617,7 +726,7 @@ static int dump_one_ibverbs(int lfd, u32 id, const struct fd_parms *p)
 		goto out;
 	}
 
-	pr_err("Found total Objs: %d\n", count);
+	pr_debug("Found total Objs: %d\n", count);
 
 	ibv.n_objs = count;
 	ibv.objs = xzalloc(pb_repeated_size(&ibv, objs));
@@ -630,7 +739,7 @@ static int dump_one_ibverbs(int lfd, u32 id, const struct fd_parms *p)
 	void *cur_obj = dump;
 	for (int i = 0; i < count; i++) {
 		struct ib_uverbs_dump_object *obj = cur_obj;
-		pr_err("Found obj of type: %d %p %p %d\n", obj->type, cur_obj, obj, *(uint32_t *)cur_obj);
+		pr_debug("Found obj of type: %d %p %p %d\n", obj->type, cur_obj, obj, *(uint32_t *)cur_obj);
 		switch(obj->type) {
 		case IB_UVERBS_OBJECT_PD:
 			ret = dump_one_ibverbs_pd(&ibv.objs[i], obj);
@@ -647,6 +756,12 @@ static int dump_one_ibverbs(int lfd, u32 id, const struct fd_parms *p)
 		case IB_UVERBS_OBJECT_AH:
 			ret = dump_one_ibverbs_ah(&ibv.objs[i], obj);
 			break;
+		case IB_UVERBS_OBJECT_SRQ:
+			ret = dump_one_ibverbs_srq(&ibv.objs[i], obj);
+			break;
+		case IB_UVERBS_OBJECT_COMP_CHANNEL:
+			ret = dump_one_ibverbs_comp_channel(&ibv.objs[i], obj);
+			break;
 		default:
 			pr_err("Unknown object type: %d\n", obj->type);
 			ret = -1;
@@ -655,7 +770,7 @@ static int dump_one_ibverbs(int lfd, u32 id, const struct fd_parms *p)
 		if (ret < 0) {
 			goto out;
 		}
-		pr_err("Moving pointer by %d\n", ret);
+		pr_debug("Moving pointer by %d\n", ret);
 		cur_obj += ret;
 	}
 
@@ -777,6 +892,7 @@ static int ibverbs_restore_pd(struct ibverbs_list_entry *entry, struct task_rest
 	struct ibv_pd *pd;
 	pd = ibv_alloc_pd(ibcontext);
 	if (!pd) {
+		pr_err("Failed to create a PD: %s\n", strerror(errno));
 		return -1;
 	}
 
@@ -790,12 +906,48 @@ static int ibverbs_restore_pd(struct ibverbs_list_entry *entry, struct task_rest
 		goto err;
 	}
 
-	pr_err("Restored PD object %d\n", obj->handle);
+	pr_debug("Restored PD object %d\n", obj->handle);
 	return 0;
 
  err:
 	ibv_dealloc_pd(pd);
 	return -1;
+}
+
+static int ibverbs_restore_comp_channel(struct ibverbs_list_entry *entry, struct task_restore_args *ta)
+{
+	IbverbsObject *obj = entry->obj;
+
+	pr_debug("Restoring comp_channel object %d\n", obj->handle);
+
+#if 0
+	struct ibv_comp_channel *comp_channel;
+	struct ibv_context *ibcontext = entry->ibcontext;
+	comp_channel = ibv_create_comp_channel(ibcontext);
+	if (!comp_channel) {
+		return -1;
+	}
+	pr_debug("Restoring comp_channel object %d fd %d\n", obj->handle, comp_channel->fd);
+
+	/* if (comp_channel->fd != obj->handle) { */
+	/* 	pr_err("Unexpected protection domain handle: %d vs %d\n", obj->handle, pd->handle); */
+	/* 	goto err; */
+	/* } */
+
+	if (ibverbs_remember_object(IB_UVERBS_OBJECT_COMP_CHANNEL, comp_channel->fd, comp_channel)) {
+		pr_err("Failed to remember object\n");
+		goto err;
+	}
+
+	pr_debug("Restored comp_channel object %d fd %d\n", obj->handle, comp_channel->fd);
+	return 0;
+
+ err:
+	ibv_destroy_comp_channel(comp_channel);
+	return -1;
+#else
+	return 0;
+#endif
 }
 
 static int ibverbs_restore_mr(struct ibverbs_list_entry *entry, struct task_restore_args *ta)
@@ -826,6 +978,7 @@ static int ibverbs_restore_mr(struct ibverbs_list_entry *entry, struct task_rest
 		pr_err("ibv_reg_mr failed: %s\n", strerror(errno));
 		return -1;
 	}
+	pr_debug("Restoring MR area: @%p - %p\n", (void *)pb_mr->address, (void *)pb_mr->length);
 
 	ret = rxe_set_last_mrn(old_mrn, NULL);
 	if (ret < 0) {
@@ -838,7 +991,7 @@ static int ibverbs_restore_mr(struct ibverbs_list_entry *entry, struct task_rest
 	args.lkey = pb_mr->lkey;
 	args.rkey = pb_mr->rkey;
 
-	pr_err("CRIU restore keys: %d==%d %d==%d\n", args.lkey, pb_mr->lkey, args.rkey, pb_mr->rkey);
+	pr_debug("CRIU restore keys: %d==%d %d==%d\n", args.lkey, pb_mr->lkey, args.rkey, pb_mr->rkey);
 
 	ret = ibv_restore_object(entry->ibcontext, (void **)&ibv_mr,
 				 IB_UVERBS_OBJECT_MR, IBV_RESTORE_MR_KEYS,
@@ -853,7 +1006,7 @@ static int ibverbs_restore_mr(struct ibverbs_list_entry *entry, struct task_rest
 		return -1;
 	}
 
-	pr_err("Restored MR object %d\n", obj->handle);
+	pr_debug("Restored MR object %d\n", obj->handle);
 	return 0;
 }
 
@@ -863,16 +1016,23 @@ static int ibverbs_restore_cq(struct ibverbs_list_entry *entry, struct task_rest
 	IbverbsCq *cq = obj->cq;
 	struct ibv_cq *ibv_cq;
 
-	if (cq->comp_channel != -1) {
-		pr_err("BBBSHSTHSHT\n");
+	if (!cq) {
 		return -1;
 	}
 
 	struct ibv_restore_cq args;
 
+	if (!cq->queue) {
+		return -1;
+	}
+
+	if (!cq->queue->rxe) {
+		return -1;
+	}
+
 	args.cqe = cq->cqe;
-	args.queue.vm_start = cq->rxe.start;
-	args.queue.vm_size = cq->rxe.size;
+	args.queue.vm_start = cq->queue->start;
+	args.queue.vm_size = cq->queue->size;
 	args.comp_vector = cq->comp_vector;
 	args.channel = NULL;
 
@@ -905,8 +1065,10 @@ static int ibverbs_restore_cq(struct ibverbs_list_entry *entry, struct task_rest
 		return -1;
 	}
 
-	struct rxe_dump_queue dump_queue;
-	restore_rxe_queue(&dump_queue, cq->rxe);
+	struct ib_uverbs_restore_object_cq_refill dump_queue;
+	restore_rxe_queue(&dump_queue.rxe, cq->queue);
+	dump_queue.comp_events_reported = cq->comp_events_reported;
+        dump_queue.async_events_reported = cq->async_events_reported;
 
 	ret = ibv_restore_object(entry->ibcontext,
 				 (void **)&ibv_cq, IB_UVERBS_OBJECT_CQ,
@@ -916,7 +1078,7 @@ static int ibverbs_restore_cq(struct ibverbs_list_entry *entry, struct task_rest
 		return -1;
 	}
 
-	pr_err("Restored CQ object %d\n", obj->handle);
+	pr_debug("Restored CQ object %d\n", obj->handle);
 	return 0;
 }
 
@@ -936,25 +1098,49 @@ static int ibverbs_restore_qp(struct ibverbs_list_entry * entry, struct task_res
 		return -1;
 	}
 
+	if (!qp) {
+		return -1;
+	}
+
+	if (!qp->sq) {
+		return -1;
+	}
+
+	if (!qp->sq->rxe) {
+		return -1;
+	}
+
+	if (!qp->rq) {
+		return -1;
+	}
+
+	if (!qp->rq->rxe) {
+		return -1;
+	}
+
 	args.attr.send_cq = ibverbs_get_object(IB_UVERBS_OBJECT_CQ, qp->scq_handle);
 	if (!args.attr.send_cq) {
-		pr_err("Failed to find PD object with id: %d\n", qp->scq_handle);
+		pr_err("Failed to find CQ object with id: %d\n", qp->scq_handle);
 		return -1;
 	}
 
 	args.attr.recv_cq = ibverbs_get_object(IB_UVERBS_OBJECT_CQ, qp->rcq_handle);
 	if (!args.attr.recv_cq) {
-		pr_err("Failed to find PD object with id: %d\n", qp->rcq_handle);
+		pr_err("Failed to find CQ object with id: %d\n", qp->rcq_handle);
 		return -1;
 	}
 
 	if (qp->srq_handle != UINT32_MAX) {
-		pr_err("SRQs are not supported: %x\n", qp->scq_handle);
-		return -ENOTSUP;
+		args.attr.srq = ibverbs_get_object(IB_UVERBS_OBJECT_SRQ, qp->srq_handle);
+		if (!args.attr.srq) {
+			pr_err("Failed to find SRQ object with id: %d\n", qp->srq_handle);
+			return -1;
+		}
+	} else {
+		args.attr.srq = NULL;
 	}
 
 	args.attr.qp_context = NULL;
-	args.attr.srq = NULL;
 	args.attr.qp_type = qp->qp_type;
 	args.attr.sq_sig_all = qp->sq_sig_all;
 
@@ -964,11 +1150,11 @@ static int ibverbs_restore_qp(struct ibverbs_list_entry * entry, struct task_res
 	args.attr.cap.max_recv_sge = qp->max_recv_sge;
 	args.attr.cap.max_inline_data = qp->max_inline_data;
 
-	args.rq.start = qp->rq_start;
-	args.rq.size = qp->rq_size;
+	args.rq.vm_start = qp->rq->start;
+	args.rq.vm_size = qp->rq->size;
 
-	args.sq.start = qp->sq_start;
-	args.sq.size = qp->sq_size;
+	args.sq.vm_start = qp->sq->start;
+	args.sq.vm_size = qp->sq->size;
 
 	void * rq_tmp = malloc(args.rq.vm_size);
 	if (!rq_tmp) {
@@ -1051,6 +1237,9 @@ static int ibverbs_restore_qp(struct ibverbs_list_entry * entry, struct task_res
 		if (qp->qp_type == IB_QPT_RC) {
 			flags |= IBV_QP_ACCESS_FLAGS;
 			attr.qp_access_flags = qp->qp_access_flags;
+		} else if (qp->qp_type == IB_QPT_UD) {
+			pr_debug("Restoring UD QP\n");
+			break;
 		} else {
 			pr_err("Unsupported\n");
 			return -1;
@@ -1138,21 +1327,137 @@ static int ibverbs_restore_qp(struct ibverbs_list_entry * entry, struct task_res
 		return -1;
 	}
 
-	struct rxe_dump_qp dump_qp;
-	restore_rxe_queue(&dump_qp.rq, qp->rxe->rq);
-	restore_rxe_queue(&dump_qp.sq, qp->rxe->sq);
-	dump_qp.wqe_index = qp->wqe_index;
-	dump_qp.req_opcode = qp->req_opcode;
-	dump_qp.comp_psn = qp->comp_psn;
-	dump_qp.comp_opcode = qp->comp_opcode;
-	dump_qp.msn = qp->msn;
-	dump_qp.resp_opcode = qp->resp_opcode;
+	if (qp->qp_type == IB_QPT_RC) {
+		struct rxe_dump_qp *dump_qp;
+		int size = sizeof(*dump_qp);
+
+		if (qp->has_srq_wqe) {
+			size += qp->srq_wqe.len;
+		}
+
+		dump_qp = xmalloc(size);
+		if (!dump_qp) {
+			return -1;
+		}
+
+		restore_rxe_queue(&dump_qp->rq, qp->rq);
+		restore_rxe_queue(&dump_qp->sq, qp->sq);
+		dump_qp->wqe_index = qp->wqe_index;
+		dump_qp->req_opcode = qp->req_opcode;
+		dump_qp->comp_psn = qp->comp_psn;
+		dump_qp->comp_opcode = qp->comp_opcode;
+		dump_qp->msn = qp->msn;
+		dump_qp->resp_opcode = qp->resp_opcode;
+
+		if (qp->has_srq_wqe) {
+			/* XXX: should handle non-zero offset */
+			dump_qp->srq_wqe_offset = 0;
+			dump_qp->srq_wqe_size = qp->srq_wqe.len;
+			memcpy(&dump_qp->data[dump_qp->srq_wqe_offset], &qp->srq_wqe.data, qp->srq_wqe.len);
+		}
+
+		ret = ibv_restore_object(entry->ibcontext,
+					 (void **)&ibv_qp, IB_UVERBS_OBJECT_QP,
+					 IBV_RESTORE_QP_REFILL, dump_qp, size);
+		if (ret) {
+			pr_err("Failed to restore QP\n");
+			return -1;
+		}
+
+		xfree(dump_qp);
+	}
+
+	pr_debug("Restored QP object %d\n", obj->handle);
+	return 0;
+}
+
+static int ibverbs_restore_srq(struct ibverbs_list_entry *entry, struct task_restore_args *ta)
+{
+	int ret;
+	IbverbsObject *obj = entry->obj;
+	IbverbsSrq *srq = obj->srq;
+	struct ibv_srq *ibv_srq;
+
+	struct ibv_restore_srq args;
+
+	args.pd = ibverbs_get_object(IB_UVERBS_OBJECT_PD, srq->pd_handle);
+	if (!args.pd) {
+		pr_err("Failed to find PD object with id: %d\n", srq->pd_handle);
+		return -1;
+	}
+
+	if (!srq) {
+		return -1;
+	}
+
+	if (!srq->queue) {
+		return -1;
+	}
+
+	if (!srq->queue->rxe) {
+		return -1;
+	}
+
+	if (srq->cq_handle != UINT32_MAX) {
+		pr_err("CQs are not supported for SRQs: %x\n", srq->cq_handle);
+		return -ENOTSUP;
+	}
+
+	args.attr.srq_context = NULL;
+	args.attr.attr.max_wr = srq->max_wr;
+	args.attr.attr.max_sge = srq->max_sge;
+	args.attr.attr.srq_limit = srq->srq_limit;
+
+	args.queue.vm_start = srq->queue->start;
+	args.queue.vm_size = srq->queue->size;
+
+	void * queue_tmp = malloc(args.queue.vm_size);
+	if (!queue_tmp) {
+		pr_err("Failed to allocate temporary buffer\n");
+		return -1;
+	}
+	memmove(queue_tmp, (void *)args.queue.vm_start, args.queue.vm_size);
+	munmap((void *)args.queue.vm_start, args.queue.vm_size);
 
 	ret = ibv_restore_object(entry->ibcontext,
-				 (void **)&ibv_qp, IB_UVERBS_OBJECT_QP,
-				 IBV_RESTORE_QP_REFILL, &dump_qp, sizeof(dump_qp));
+				 (void **)&ibv_srq, IB_UVERBS_OBJECT_SRQ,
+				 IBV_RESTORE_SRQ_CREATE, &args, sizeof(args));
 	if (ret) {
 		pr_err("Failed to restore QP\n");
+		return -1;
+	}
+
+	memmove((void *)args.queue.vm_start, queue_tmp, args.queue.vm_size);
+	free(queue_tmp);
+
+	pr_debug("SRQ adding range %p + 0x%lx \n", (void *) args.queue.vm_start, args.queue.vm_size);
+	if (args.queue.vm_size > 0) {
+		if (keep_address_range((u64) args.queue.vm_start, args.queue.vm_size)) {
+			pr_err("Adding range %lx+ %lx failed\n",
+			       (u64) args.queue.vm_start, args.queue.vm_size);
+			return -1;
+		}
+	}
+
+	struct rxe_dump_queue dump_queue;
+	restore_rxe_queue(&dump_queue, srq->queue);
+
+	ret = ibv_restore_object(entry->ibcontext,
+				 (void **)&ibv_srq, IB_UVERBS_OBJECT_SRQ,
+				 IBV_RESTORE_SRQ_REFILL, &dump_queue, sizeof(dump_queue));
+	if (ret) {
+		pr_err("Failed to restore SRQ: %s\n", strerror(errno));
+		return -1;
+	}
+
+	if (ibverbs_remember_object(IB_UVERBS_OBJECT_SRQ, ibv_srq->handle, ibv_srq)) {
+		pr_err("Failed to remember SRQ object with id %d\n", ibv_srq->handle);
+		return -1;
+	}
+
+	pr_debug("Restored SRQ object %d\n", obj->handle);
+	return 0;
+}
 
 static int ibverbs_restore_ah(struct ibverbs_list_entry *entry, struct task_restore_args *ta)
 {
@@ -1184,7 +1489,7 @@ static int ibverbs_restore_ah(struct ibverbs_list_entry *entry, struct task_rest
 		return -1;
 	}
 
-	pr_err("Restored AH object %d\n", obj->handle);
+	pr_debug("Restored AH object %d\n", obj->handle);
 	return 0;
 }
 
@@ -1210,8 +1515,9 @@ static int ibverbs_open(struct file_desc *d, int *new_fd)
 		pr_perror("Failed to open the device\n");
 		goto err;
 	}
-	pr_err("Opened device: cmd_fd %d async_fd %d file_desc->id %d\n",
-	       ibcontext->cmd_fd, ibcontext->async_fd, d->id);
+	IBCONTEXT = ibcontext;
+	pr_debug("Opened device: cmd_fd %d async_fd %d file_desc->id %d\n",
+		 ibcontext->cmd_fd, ibcontext->async_fd, d->id);
 
 	if (rst_file_params(ibcontext->cmd_fd, info->ibv->fown, info->ibv->flags)) {
 		pr_perror("Can't restore params on ibverbs %#08x\n",
@@ -1219,7 +1525,7 @@ static int ibverbs_open(struct file_desc *d, int *new_fd)
 		goto err_close;
 	}
 
-	pr_err("Available objects for the context: %ld\n", info->ibv->n_objs);
+	pr_debug("Available objects for the context: %ld\n", info->ibv->n_objs);
 
 	/* The reverse order of objects in the list is important, because the
 	 * dump we get first has MR, then PD */
@@ -1230,6 +1536,7 @@ static int ibverbs_open(struct file_desc *d, int *new_fd)
 		le->ibcontext = ibcontext;
 		le->obj = info->ibv->objs[i];
 
+		pr_debug("Installing type %d\n", le->obj->type);
 		switch (le->obj->type) {
 		case IBVERBS_OBJECT_TYPE__PD:
 			le->restore = ibverbs_restore_pd;
@@ -1246,6 +1553,12 @@ static int ibverbs_open(struct file_desc *d, int *new_fd)
 		case IBVERBS_OBJECT_TYPE__AH:
 			le->restore = ibverbs_restore_ah;
 			break;
+		case IBVERBS_OBJECT_TYPE__SRQ:
+			le->restore = ibverbs_restore_srq;
+			break;
+		case IBVERBS_OBJECT_TYPE__COMP_CHANNEL:
+			le->restore = ibverbs_restore_comp_channel;
+			break;
 		default:
 			pr_err("Object type is not supported: %d\n", le->obj->type);
 			goto err_close;
@@ -1253,14 +1566,20 @@ static int ibverbs_open(struct file_desc *d, int *new_fd)
 		list_add(&le->restore_list, &ibverbs_restore_objects);
 	}
 
-	pr_info("Opened a device %d %d", ibcontext->cmd_fd, ibcontext->async_fd);
+	pr_info("Opened a device %d %d\n", ibcontext->cmd_fd, ibcontext->async_fd);
 	last_event_fd = ibcontext->async_fd;
 
+	*new_fd = ibcontext->cmd_fd;
+
+	ibcontext->cmd_fd = 8;
+	ibcontext->cmd_fd = 16;
+	ibcontext->async_fd = 17;
+
 	if (append_context(ibcontext->cmd_fd)) {
+	/* if (append_context(18)) { */
 		goto err_close;
 	}
 
-	*new_fd = ibcontext->cmd_fd;
 	return 0;
 
  err_close:
@@ -1303,9 +1622,6 @@ static int ibverbs_area_open(int pid, struct vma_area *vma)
 
 	void *addr;
 
-	pr_err("Found ibverbs area 0x%08lx - 0x%08lx tgt 0x%08lx Anon %d, FD %ld\n", vma->e->start, vma->e->end, vma->premmaped_addr,
-	       vma->e->flags & MAP_ANONYMOUS, vma->e->fd);
-
 	addr = mmap((void *)vma->e->start, vma_entry_len(vma->e),
 		    vma->e->prot | PROT_WRITE,
 		    vma->e->flags | MAP_FIXED,
@@ -1334,7 +1650,7 @@ int prepare_ibverbs(struct pstree_item *me, struct task_restore_args *ta)
 
 	int i = 0;
 	list_for_each_entry(le, &ibverbs_restore_objects, restore_list) {
-		pr_err("Restoring object %d of type %d\n", i++, le->obj->type);
+		pr_debug("Restoring object %d of type %d fd %d\n", i++, le->obj->type, le->ibcontext->cmd_fd);
 		int ret = le->restore(le, ta);
 		if (ret < 0) {
 			pr_err("Failed to restore object of type: %d\n", le->obj->type);
@@ -1406,6 +1722,28 @@ static int ibevent_open(struct file_desc *d, int *new_fd)
 
 	info = container_of(d, struct ibevent_file_info, d);
 
+	/* XXX: All this code is bullshit and must be rewritten. There simply
+	 * should not be a static variable. */
+	static int count = 0;
+	if (count > 0) {
+		struct ibv_comp_channel *comp_channel;
+
+		pr_debug("Restoring comp_channel object %p fd %d\n", IBCONTEXT, IBCONTEXT->cmd_fd);
+		comp_channel = ibv_create_comp_channel(IBCONTEXT);
+		if (!comp_channel) {
+			pr_err("Failed to restore comp_channel: %d %s\n", IBCONTEXT->cmd_fd, strerror(errno));
+			return -1;
+		}
+
+		pr_debug("Restored comp_channel fd %d\n", comp_channel->fd);
+		int flags = fcntl(comp_channel->fd, F_GETFL, 0);
+		fcntl(comp_channel->fd, F_SETFL, flags | O_NONBLOCK);
+
+		*new_fd = comp_channel->fd;
+		return 0;
+	}
+	count++;
+
 	tmp = ibevent();
 	if (tmp < 0) {
 		pr_perror("Can't create eventfd %#08x",
@@ -1419,7 +1757,8 @@ static int ibevent_open(struct file_desc *d, int *new_fd)
 	/* 	goto err_close; */
 	/* } */
 
-	pr_err("opened ibevent: id %d fd %d\n", d->id, tmp);
+	pr_debug("opened ibevent: id %d fd %d\n", d->id, tmp);
+	IBCONTEXT->cmd_fd = 16;
 	*new_fd = tmp;
 	return 0;
 
