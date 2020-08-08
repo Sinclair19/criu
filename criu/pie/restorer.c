@@ -1171,7 +1171,7 @@ static int unmap_old_vmas(struct rst_address_range *kept_ranges, unsigned long n
 	for (unsigned i = 0; i < n; i++) {
 		end = kept_ranges[i].start;
 		if (start != end) {
-			pr_err("Unmap range (%lx-%lx)\n", start, end);
+			pr_debug("Unmap range (%lx-%lx)\n", start, end);
 			ret = sys_munmap((void *)start, end - start);
 			if (ret) {
 				pr_err("Unable to unmap (0x%lx-0x%lx): %d\n", start, end, ret);
@@ -1180,7 +1180,7 @@ static int unmap_old_vmas(struct rst_address_range *kept_ranges, unsigned long n
 		start = kept_ranges[i].start + kept_ranges[i].size;
 	}
 
-	pr_err("Unmap range (%lx-%lx)\n", start, task_size);
+	pr_debug("Unmap range (%lx-%lx)\n", start, task_size);
 	ret = sys_munmap((void *)start, task_size - start);
 	if (ret) {
 		pr_err("Unable to unmap (0x%lx-0x%lx): %d\n", start, task_size, ret);

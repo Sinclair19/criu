@@ -30,6 +30,9 @@ enum IbverbsObjectType {
 message ibverbs_pd {
 };
 
+message ibverbs_comp_channel {
+};
+
 message ibverbs_mr {
 	required uint64	address		= 2;
 	required uint64	length		= 3;
@@ -47,19 +50,20 @@ message rxe_queue {
 	required uint32 consumer_index	= 4;
 };
 
-message rxe_qp {
-	required rxe_queue sq	= 1;
-	required rxe_queue rq	= 2;
-};
+message ibverbs_queue {
+	required uint64 start		= 1;
+	required uint64 size			= 2;
+	optional rxe_queue rxe	= 3;
+}
 
 message ibverbs_cq {
 	required uint32 cqe		= 1;
 	required uint32 comp_channel	= 2;
 	required uint32 comp_vector	= 3;
-	required uint64 vm_start	= 4;
-	required uint64 vm_size		= 5;
+	required uint32 comp_events_reported = 4;
+	required uint32 async_events_reported = 5;
 
-	required rxe_queue rxe		= 6;
+	required ibverbs_queue queue		= 6;
 };
 
 message ibv_global_route {
@@ -82,10 +86,6 @@ message ibverbs_ah {
 };
 
 message ibverbs_qp {
-	required uint64 rq_start		= 1;
-	required uint64 rq_size			= 2;
-	required uint64 sq_start		= 3;
-	required uint64 sq_size			= 4;
 	required uint32 pd_handle		= 5;
 	required uint32 scq_handle		= 6;
 	required uint32 rcq_handle		= 7;
@@ -118,10 +118,22 @@ message ibverbs_qp {
 	required uint32 comp_opcode		= 36;
 	required uint32 msn			= 37;
 	required uint32 resp_opcode		= 38;
+  optional bytes srq_wqe = 41;
 
 	required ibverbs_ah ah_attr	= 25;
-	required rxe_qp rxe			= 32;
+	required ibverbs_queue rq			= 39;
+	required ibverbs_queue sq			= 40;
 };
+
+message ibverbs_srq {
+	required uint32 pd_handle		= 1;
+	required uint32 cq_handle		= 2;
+	required uint32 srq_type		= 3;
+	required uint32 max_wr		= 4;
+	required uint32 max_sge		= 5;
+	required uint32 srq_limit		= 6;
+	required ibverbs_queue queue		= 7;
+}
 
 message ibverbs_object {
 	required IbverbsObjectType	type	= 1;
@@ -131,6 +143,8 @@ message ibverbs_object {
 	optional ibverbs_cq		cq	= 5;
 	optional ibverbs_qp		qp	= 6;
 	optional ibverbs_ah		ah	= 7;
+	optional ibverbs_srq	srq	= 8;
+	optional ibverbs_comp_channel		comp_channel	= 9;
 };
 
 message ibverbs_entry {
