@@ -2773,7 +2773,7 @@ static int prep_ns_sockets(struct ns_id *ns, bool for_dump)
 	 * policies installed. For Fedora based systems this is part
 	 * of the container-selinux package.
 	 */
-	security_context_t ctx;
+	char *ctx;
 
 	/*
 	 * This assumes that all processes CRIU wants to dump are labeled
