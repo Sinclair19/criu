@@ -1,6 +1,4 @@
-#!/usr/bin/env python
-# vim: noet ts=8 sw=8 sts=8
-
+#!/usr/bin/env python3
 import pycriu
 import sys
 import os

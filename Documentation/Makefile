@@ -12,7 +12,9 @@ endif
 
 FOOTER		:= footer.txt
 SRC1		+= crit.txt
+SRC1		+= criu-ns.txt
 SRC1		+= compel.txt
+SRC1		+= criu-amdgpu-plugin.txt
 SRC8		+= criu.txt
 SRC		:= $(SRC1) $(SRC8)
 XMLS		:= $(patsubst %.txt,%.xml,$(SRC))

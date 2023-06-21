@@ -20,7 +20,7 @@ for i in `cat /proc/self/mounts | awk '{ print $2 }'`; do
 	umount -l $i
 done
 
-python mounts.py
+python3 mounts.py
 kill $INMNTNS_PID
 while :; do
 	sleep 10
