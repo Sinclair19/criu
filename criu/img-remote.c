@@ -11,6 +11,7 @@
 #include "protobuf.h"
 #include "servicefd.h"
 #include "xmalloc.h"
+#include "string.h"
 
 #define EPOLL_MAX_EVENTS 50
 
@@ -1092,7 +1093,7 @@ int push_snapshot_id(void)
 		close(sockfd);
 		return -1;
 	}
-	strncpy(rn.snapshot_id, snapshot_id, PATH_MAX);
+	strlcpy(rn.snapshot_id, snapshot_id, PATH_MAX);
 
 	n = pb_write_obj(sockfd, &rn, PB_SNAPSHOT_ID);
 
