@@ -695,7 +695,7 @@ static int dump_one_ibverbs(int lfd, u32 id, const struct fd_parms *p)
 
 	struct ibv_device *ibdev;
 	struct ibv_context *ctx;
-	const char *ib_devname = "rxe0";
+	const char *ib_devname = "rocep2s4";
 	ibdev = find_ibdev(ib_devname);
 	if (!ibdev) {
 		pr_err("IB device %s not found\n", ib_devname);
@@ -1498,7 +1498,7 @@ static int ibverbs_open(struct file_desc *d, int *new_fd)
 	struct ibverbs_file_info *info;
 	struct ibv_device *ibdev;
 	struct ibv_context *ibcontext;
-	const char *ib_devname = "rxe0";
+	const char *ib_devname = "rocep2s4";
 
 	info = container_of(d, struct ibverbs_file_info, d);
 
