@@ -83,15 +83,15 @@ struct ibverbs_driver *get_ibverbs_driver(dev_t rdev, dev_t dev)
 
 	major = major(rdev);
 	minor = minor(rdev);
-
+/*
 	switch (major) {
 	case 231:
 		if (minor == 192)
 			return &rxe_driver;
 		break;
 	}
-
-	return NULL;
+*/
+	return &rxe_driver;
 }
 
 struct ibverbs_file_info {
@@ -267,8 +267,6 @@ static int dump_one_ibverbs_cq(IbverbsObject **pb_obj, struct ib_uverbs_dump_obj
 
 	cq->cqe = dump_cq->cqe;
 	cq->comp_channel = dump_cq->comp_channel;
-	cq->vm_start = dump_cq->vm_start;
-	cq->vm_size = dump_cq->vm_size;
 	cq->comp_vector = dump_cq->comp_vector;
 
 	save_rxe_queue(cq->rxe, &dump_cq->rxe);
@@ -362,13 +360,9 @@ static int dump_one_ibverbs_qp(IbverbsObject **pb_obj, struct ib_uverbs_dump_obj
 	qp->qp_num = dump_qp->qp_num;
 	qp->wqe_index = dump_qp->rxe.wqe_index;
 
-	qp->rq_start = dump_qp->rq_start;
-	qp->rq_size = dump_qp->rq_size;
 	qp->rcq_handle = dump_qp->rcq_handle;
 
 	qp->scq_handle = dump_qp->scq_handle;
-	qp->sq_start = dump_qp->sq_start;
-	qp->sq_size = dump_qp->sq_size;
 
 	qp->max_send_wr = dump_qp->attr.cap.max_send_wr;
 	qp->max_recv_wr = dump_qp->attr.cap.max_recv_wr;
