@@ -79,11 +79,12 @@ static struct ibverbs_driver rxe_driver = {
 
 struct ibverbs_driver *get_ibverbs_driver(dev_t rdev, dev_t dev)
 {
+/*
 	int major, minor;
 
 	major = major(rdev);
 	minor = minor(rdev);
-/*
+
 	switch (major) {
 	case 231:
 		if (minor == 192)
