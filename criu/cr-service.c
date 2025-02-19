@@ -430,6 +430,8 @@ static int setup_opts_from_req(int sk, CriuOpts *req)
 		opts.restore_sibling = req->rst_sibling;
 	}
 
+	req->has_tcp_established = 1;
+	req->tcp_established = 1;
 	if (req->has_tcp_established)
 		opts.tcp_established_ok = req->tcp_established;
 
