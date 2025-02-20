@@ -1571,10 +1571,13 @@ static int ibverbs_open(struct file_desc *d, int *new_fd)
 	last_event_fd = ibcontext->async_fd;
 
 	*new_fd = ibcontext->cmd_fd;
-
+	
+	/*
+	
 	ibcontext->cmd_fd = 8;
 	ibcontext->cmd_fd = 16;
 	ibcontext->async_fd = 17;
+	*/
 
 	if (append_context(ibcontext->cmd_fd)) {
 	/* if (append_context(18)) { */
@@ -1759,7 +1762,7 @@ static int ibevent_open(struct file_desc *d, int *new_fd)
 	/* } */
 
 	pr_debug("opened ibevent: id %d fd %d\n", d->id, tmp);
-	IBCONTEXT->cmd_fd = 16;
+	//IBCONTEXT->cmd_fd = 16;
 	*new_fd = tmp;
 	return 0;
 
